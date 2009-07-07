@@ -411,14 +411,14 @@ static int nl80211_get_wiphy(struct sk_buff *skb, struct genl_info *info)
 	if (nl80211_send_wiphy(msg, info->snd_pid, info->snd_seq, 0, dev) < 0)
 		goto out_free;
 
-	cfg80211_put_dev(dev);
+	cfg80211_unlock_rdev(dev);
 
 	return genlmsg_unicast(msg, info->snd_pid);
 
  out_free:
 	nlmsg_free(msg);
  out_err:
-	cfg80211_put_dev(dev);
+	cfg80211_unlock_rdev(dev);
 	return -ENOBUFS;
 }
 
@@ -736,7 +736,7 @@ static int nl80211_get_interface(struct sk_buff *skb, struct genl_info *info)
 		goto out_free;
 
 	dev_put(netdev);
-	cfg80211_put_dev(dev);
+	cfg80211_unlock_rdev(dev);
 
 	return genlmsg_unicast(msg, info->snd_pid);
 
@@ -744,7 +744,7 @@ static int nl80211_get_interface(struct sk_buff *skb, struct genl_info *info)
 	nlmsg_free(msg);
  out_err:
 	dev_put(netdev);
-	cfg80211_put_dev(dev);
+	cfg80211_unlock_rdev(dev);
 	return -ENOBUFS;
 }
 
@@ -852,7 +852,7 @@ static int nl80211_set_interface(struct sk_buff *skb, struct genl_info *info)
 
  unlock:
 	dev_put(dev);
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
  unlock_rtnl:
 	rtnl_unlock();
 	return err;
@@ -905,7 +905,7 @@ static int nl80211_new_interface(struct sk_buff *skb, struct genl_info *info)
 		type, err ? NULL : &flags, &params);
 
  unlock:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
  unlock_rtnl:
 	rtnl_unlock();
 	return err;
@@ -933,7 +933,7 @@ static int nl80211_del_interface(struct sk_buff *skb, struct genl_info *info)
 	err = drv->ops->del_virtual_intf(&drv->wiphy, ifindex);
 
  out:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
  unlock_rtnl:
 	rtnl_unlock();
 	return err;
@@ -1036,7 +1036,7 @@ static int nl80211_get_key(struct sk_buff *skb, struct genl_info *info)
 	err = -ENOBUFS;
 	nlmsg_free(msg);
  out:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
  unlock_rtnl:
 	rtnl_unlock();
@@ -1096,7 +1096,7 @@ static int nl80211_set_key(struct sk_buff *skb, struct genl_info *info)
 #endif
 
  out:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
 
  unlock_rtnl:
@@ -1162,7 +1162,7 @@ static int nl80211_new_key(struct sk_buff *skb, struct genl_info *info)
 	err = drv->ops->add_key(&drv->wiphy, dev, key_idx, mac_addr, &params);
 
  out:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
  unlock_rtnl:
 	rtnl_unlock();
@@ -1210,7 +1210,7 @@ static int nl80211_del_key(struct sk_buff *skb, struct genl_info *info)
 #endif
 
  out:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
 
  unlock_rtnl:
@@ -1305,7 +1305,7 @@ static int nl80211_addset_beacon(struct sk_buff *skb, struct genl_info *info)
 	err = call(&drv->wiphy, dev, &params);
 
  out:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
  unlock_rtnl:
 	rtnl_unlock();
@@ -1337,7 +1337,7 @@ static int nl80211_del_beacon(struct sk_buff *skb, struct genl_info *info)
 	err = drv->ops->del_beacon(&drv->wiphy, dev);
 
  out:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
  unlock_rtnl:
 	rtnl_unlock();
@@ -1571,7 +1571,7 @@ static int nl80211_dump_station(struct sk_buff *skb,
 	cb->args[1] = sta_idx;
 	err = skb->len;
  out_err:
-	cfg80211_put_dev(dev);
+	cfg80211_unlock_rdev(dev);
  out_rtnl:
 	rtnl_unlock();
 
@@ -1623,7 +1623,7 @@ static int nl80211_get_station(struct sk_buff *skb, struct genl_info *info)
  out_free:
 	nlmsg_free(msg);
  out:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
  out_rtnl:
 	rtnl_unlock();
@@ -1759,7 +1759,7 @@ static int nl80211_set_station(struct sk_buff *skb, struct genl_info *info)
  out:
 	if (params.vlan)
 		dev_put(params.vlan);
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
  out_rtnl:
 	rtnl_unlock();
@@ -1864,7 +1864,7 @@ static int nl80211_new_station(struct sk_buff *skb, struct genl_info *info)
  out:
 	if (params.vlan)
 		dev_put(params.vlan);
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
  out_rtnl:
 	rtnl_unlock();
@@ -1903,7 +1903,7 @@ static int nl80211_del_station(struct sk_buff *skb, struct genl_info *info)
 	err = drv->ops->del_station(&drv->wiphy, dev, mac_addr);
 
  out:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
  out_rtnl:
 	rtnl_unlock();
@@ -2034,7 +2034,7 @@ static int nl80211_dump_mpath(struct sk_buff *skb,
 	cb->args[1] = path_idx;
 	err = skb->len;
  out_err:
-	cfg80211_put_dev(dev);
+	cfg80211_unlock_rdev(dev);
  out_rtnl:
 	rtnl_unlock();
 
@@ -2092,7 +2092,7 @@ static int nl80211_get_mpath(struct sk_buff *skb, struct genl_info *info)
  out_free:
 	nlmsg_free(msg);
  out:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
  out_rtnl:
 	rtnl_unlock();
@@ -2141,7 +2141,7 @@ static int nl80211_set_mpath(struct sk_buff *skb, struct genl_info *info)
 	err = drv->ops->change_mpath(&drv->wiphy, dev, dst, next_hop);
 
  out:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
  out_rtnl:
 	rtnl_unlock();
@@ -2189,7 +2189,7 @@ static int nl80211_new_mpath(struct sk_buff *skb, struct genl_info *info)
 	err = drv->ops->add_mpath(&drv->wiphy, dev, dst, next_hop);
 
  out:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
  out_rtnl:
 	rtnl_unlock();
@@ -2221,7 +2221,7 @@ static int nl80211_del_mpath(struct sk_buff *skb, struct genl_info *info)
 	err = drv->ops->del_mpath(&drv->wiphy, dev, dst);
 
  out:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
  out_rtnl:
 	rtnl_unlock();
@@ -2277,7 +2277,7 @@ static int nl80211_set_bss(struct sk_buff *skb, struct genl_info *info)
 	err = drv->ops->change_bss(&drv->wiphy, dev, &params);
 
  out:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
  out_rtnl:
 	rtnl_unlock();
@@ -2443,7 +2443,7 @@ static int nl80211_get_mesh_params(struct sk_buff *skb,
 	err = -EMSGSIZE;
  out:
 	/* Cleanup */
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
  out_rtnl:
 	rtnl_unlock();
@@ -2549,7 +2549,7 @@ static int nl80211_set_mesh_params(struct sk_buff *skb, struct genl_info *info)
 
  out:
 	/* cleanup */
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
  out_rtnl:
 	rtnl_unlock();
@@ -2889,7 +2889,7 @@ static int nl80211_trigger_scan(struct sk_buff *skb, struct genl_info *info)
 		kfree(request);
 	}
  out:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
  out_rtnl:
 	rtnl_unlock();
@@ -3006,7 +3006,7 @@ static int nl80211_dump_scan(struct sk_buff *skb,
 
 	cb->args[1] = idx;
 	err = skb->len;
-	cfg80211_put_dev(dev);
+	cfg80211_unlock_rdev(dev);
  out_put_netdev:
 	dev_put(netdev);
 
@@ -3111,7 +3111,7 @@ static int nl80211_authenticate(struct sk_buff *skb, struct genl_info *info)
 				 ssid, ssid_len, ie, ie_len);
 
 out:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
 unlock_rtnl:
 	rtnl_unlock();
@@ -3258,7 +3258,7 @@ static int nl80211_associate(struct sk_buff *skb, struct genl_info *info)
 					  &crypto);
 
 out:
-	cfg80211_put_dev(rdev);
+	cfg80211_unlock_rdev(rdev);
 	dev_put(dev);
 unlock_rtnl:
 	rtnl_unlock();
@@ -3320,7 +3320,7 @@ static int nl80211_deauthenticate(struct sk_buff *skb, struct genl_info *info)
 	err = cfg80211_mlme_deauth(drv, dev, bssid, ie, ie_len, reason_code);
 
 out:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
 unlock_rtnl:
 	rtnl_unlock();
@@ -3382,7 +3382,7 @@ static int nl80211_disassociate(struct sk_buff *skb, struct genl_info *info)
 	err = cfg80211_mlme_disassoc(drv, dev, bssid, ie, ie_len, reason_code);
 
 out:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
 unlock_rtnl:
 	rtnl_unlock();
@@ -3463,7 +3463,7 @@ static int nl80211_join_ibss(struct sk_buff *skb, struct genl_info *info)
 	err = cfg80211_join_ibss(drv, dev, &ibss);
 
 out:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
 unlock_rtnl:
 	rtnl_unlock();
@@ -3500,7 +3500,7 @@ static int nl80211_leave_ibss(struct sk_buff *skb, struct genl_info *info)
 	err = cfg80211_leave_ibss(drv, dev, false);
 
 out:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
 unlock_rtnl:
 	rtnl_unlock();
@@ -3537,7 +3537,7 @@ static int nl80211_testmode_do(struct sk_buff *skb, struct genl_info *info)
 		rdev->testmode_info = NULL;
 	}
 
-	cfg80211_put_dev(rdev);
+	cfg80211_unlock_rdev(rdev);
 
  unlock_rtnl:
 	rtnl_unlock();
@@ -3706,7 +3706,7 @@ static int nl80211_connect(struct sk_buff *skb, struct genl_info *info)
 	err = cfg80211_connect(drv, dev, &connect);
 
 out:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
 unlock_rtnl:
 	rtnl_unlock();
@@ -3747,7 +3747,7 @@ static int nl80211_disconnect(struct sk_buff *skb, struct genl_info *info)
 	err = cfg80211_disconnect(drv, dev, reason, true);
 
 out:
-	cfg80211_put_dev(drv);
+	cfg80211_unlock_rdev(drv);
 	dev_put(dev);
 unlock_rtnl:
 	rtnl_unlock();
