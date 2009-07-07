@@ -1,7 +1,7 @@
 /*
- * This file is part of wl12xx
+ * This file is part of wl1251
  *
- * Copyright (C) 2009 Nokia Corporation
+ * Copyright (C) 2008 Nokia Corporation
  *
  * Contact: Kalle Valo <kalle.valo@nokia.com>
  *
@@ -21,13 +21,20 @@
  *
  */
 
-#ifndef WL12XX_DEBUGFS_H
-#define WL12XX_DEBUGFS_H
+#ifndef __BOOT_H__
+#define __BOOT_H__
 
-#include "wl12xx.h"
+#include "wl1251.h"
 
-int wl12xx_debugfs_init(struct wl12xx *wl);
-void wl12xx_debugfs_exit(struct wl12xx *wl);
-void wl12xx_debugfs_reset(struct wl12xx *wl);
+int wl1251_boot_soft_reset(struct wl1251 *wl);
+int wl1251_boot_init_seq(struct wl1251 *wl);
+int wl1251_boot_run_firmware(struct wl1251 *wl);
+void wl1251_boot_target_enable_interrupts(struct wl1251 *wl);
 
-#endif /* WL12XX_DEBUGFS_H */
+/* number of times we try to read the INIT interrupt */
+#define INIT_LOOP 20000
+
+/* delay between retries */
+#define INIT_LOOP_DELAY 50
+
+#endif

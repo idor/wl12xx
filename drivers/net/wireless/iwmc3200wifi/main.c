@@ -53,11 +53,7 @@
 static struct iwm_conf def_iwm_conf = {
 
 	.sdio_ior_timeout	= 5000,
-	.init_calib_map		= BIT(PHY_CALIBRATE_DC_CMD)	|
-				  BIT(PHY_CALIBRATE_LO_CMD)	|
-				  BIT(PHY_CALIBRATE_TX_IQ_CMD)	|
-				  BIT(PHY_CALIBRATE_RX_IQ_CMD),
-	.periodic_calib_map	= BIT(PHY_CALIBRATE_DC_CMD)	|
+	.calib_map		= BIT(PHY_CALIBRATE_DC_CMD)	|
 				  BIT(PHY_CALIBRATE_LO_CMD)	|
 				  BIT(PHY_CALIBRATE_TX_IQ_CMD)	|
 				  BIT(PHY_CALIBRATE_RX_IQ_CMD)	|
@@ -191,6 +187,7 @@ int iwm_priv_init(struct iwm_priv *iwm)
 	INIT_LIST_HEAD(&iwm->pending_notif);
 	init_waitqueue_head(&iwm->notif_queue);
 	init_waitqueue_head(&iwm->nonwifi_queue);
+	init_waitqueue_head(&iwm->wifi_ntfy_queue);
 	init_waitqueue_head(&iwm->mlme_queue);
 	memcpy(&iwm->conf, &def_iwm_conf, sizeof(struct iwm_conf));
 	spin_lock_init(&iwm->tx_credit.lock);
@@ -229,7 +226,7 @@ int iwm_priv_init(struct iwm_priv *iwm)
 	for (i = 0; i < IWM_NUM_KEYS; i++)
 		memset(&iwm->keys[i], 0, sizeof(struct iwm_key));
 
-	iwm->default_key = NULL;
+	iwm->default_key = -1;
 
 	init_timer(&iwm->watchdog);
 	iwm->watchdog.function = iwm_watchdog;
@@ -518,13 +515,6 @@ static int iwm_channels_init(struct iwm_priv *iwm)
 {
 	int ret;
 
-#ifdef CONFIG_IWM_B0_HW_SUPPORT
-	if (iwm->conf.hw_b0) {
-		IWM_INFO(iwm, "Workaround EEPROM channels for B0 hardware\n");
-		return 0;
-	}
-#endif
-
 	ret = iwm_send_umac_channel_list(iwm);
 	if (ret) {
 		IWM_ERR(iwm, "Send channel list failed\n");
@@ -642,29 +632,16 @@ int __iwm_up(struct iwm_priv *iwm)
 		}
 	}
 
-	iwm->umac_profile = kmalloc(sizeof(struct iwm_umac_profile),
-				    GFP_KERNEL);
-	if (!iwm->umac_profile) {
-		IWM_ERR(iwm, "Couldn't alloc memory for profile\n");
-		goto err_fw;
-	}
-
-	iwm_init_default_profile(iwm, iwm->umac_profile);
-
 	ret = iwm_channels_init(iwm);
 	if (ret < 0) {
 		IWM_ERR(iwm, "Couldn't init channels\n");
-		goto err_profile;
+		goto err_fw;
 	}
 
 	/* Set the READY bit to indicate interface is brought up successfully */
 	set_bit(IWM_STATUS_READY, &iwm->status);
 
 	return 0;
-
- err_profile:
-	kfree(iwm->umac_profile);
-	iwm->umac_profile = NULL;
 
  err_fw:
 	iwm_eeprom_exit(iwm);
@@ -704,11 +681,10 @@ int __iwm_down(struct iwm_priv *iwm)
 	clear_bit(IWM_STATUS_READY, &iwm->status);
 
 	iwm_eeprom_exit(iwm);
-	kfree(iwm->umac_profile);
-	iwm->umac_profile = NULL;
 	iwm_bss_list_clean(iwm);
-
-	iwm->default_key = NULL;
+	iwm_init_default_profile(iwm, iwm->umac_profile);
+	iwm->umac_profile_active = false;
+	iwm->default_key = -1;
 	iwm->core_enabled = 0;
 
 	ret = iwm_bus_disable(iwm);

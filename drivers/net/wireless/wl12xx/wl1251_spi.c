@@ -1,5 +1,5 @@
 /*
- * This file is part of wl12xx
+ * This file is part of wl1251
  *
  * Copyright (C) 2008 Nokia Corporation
  *
@@ -25,13 +25,11 @@
 #include <linux/crc7.h>
 #include <linux/spi/spi.h>
 
-#include "wl12xx.h"
-#include "wl12xx_80211.h"
+#include "wl1251.h"
 #include "reg.h"
-#include "spi.h"
-#include "ps.h"
+#include "wl1251_spi.h"
 
-static int wl12xx_translate_reg_addr(struct wl12xx *wl, int addr)
+static int wl1251_translate_reg_addr(struct wl1251 *wl, int addr)
 {
 	/* If the address is lower than REGISTERS_BASE, it means that this is
 	 * a chip-specific register address, so look it up in the registers
@@ -39,7 +37,7 @@ static int wl12xx_translate_reg_addr(struct wl12xx *wl, int addr)
 	if (addr < REGISTERS_BASE) {
 		/* Make sure we don't go over the table */
 		if (addr >= ACX_REG_TABLE_LEN) {
-			wl12xx_error("address out of range (%d)", addr);
+			wl1251_error("address out of range (%d)", addr);
 			return -EINVAL;
 		}
 		addr = wl->chip.acx_reg_table[addr];
@@ -48,13 +46,13 @@ static int wl12xx_translate_reg_addr(struct wl12xx *wl, int addr)
 	return addr - wl->physical_reg_addr + wl->virtual_reg_addr;
 }
 
-static int wl12xx_translate_mem_addr(struct wl12xx *wl, int addr)
+static int wl1251_translate_mem_addr(struct wl1251 *wl, int addr)
 {
 	return addr - wl->physical_mem_addr + wl->virtual_mem_addr;
 }
 
 
-void wl12xx_spi_reset(struct wl12xx *wl)
+void wl1251_spi_reset(struct wl1251 *wl)
 {
 	u8 *cmd;
 	struct spi_transfer t;
@@ -62,7 +60,7 @@ void wl12xx_spi_reset(struct wl12xx *wl)
 
 	cmd = kzalloc(WSPI_INIT_CMD_LEN, GFP_KERNEL);
 	if (!cmd) {
-		wl12xx_error("could not allocate cmd for spi reset");
+		wl1251_error("could not allocate cmd for spi reset");
 		return;
 	}
 
@@ -77,10 +75,10 @@ void wl12xx_spi_reset(struct wl12xx *wl)
 
 	spi_sync(wl->spi, &m);
 
-	wl12xx_dump(DEBUG_SPI, "spi reset -> ", cmd, WSPI_INIT_CMD_LEN);
+	wl1251_dump(DEBUG_SPI, "spi reset -> ", cmd, WSPI_INIT_CMD_LEN);
 }
 
-void wl12xx_spi_init(struct wl12xx *wl)
+void wl1251_spi_init(struct wl1251 *wl)
 {
 	u8 crc[WSPI_INIT_CMD_CRC_LEN], *cmd;
 	struct spi_transfer t;
@@ -88,7 +86,7 @@ void wl12xx_spi_init(struct wl12xx *wl)
 
 	cmd = kzalloc(WSPI_INIT_CMD_LEN, GFP_KERNEL);
 	if (!cmd) {
-		wl12xx_error("could not allocate cmd for spi init");
+		wl1251_error("could not allocate cmd for spi init");
 		return;
 	}
 
@@ -131,7 +129,7 @@ void wl12xx_spi_init(struct wl12xx *wl)
 
 	spi_sync(wl->spi, &m);
 
-	wl12xx_dump(DEBUG_SPI, "spi init -> ", cmd, WSPI_INIT_CMD_LEN);
+	wl1251_dump(DEBUG_SPI, "spi init -> ", cmd, WSPI_INIT_CMD_LEN);
 }
 
 /* Set the SPI partitions to access the chip addresses
@@ -167,45 +165,47 @@ void wl12xx_spi_init(struct wl12xx *wl)
  *                                    |    |
  *
  */
-void wl12xx_set_partition(struct wl12xx *wl,
+int wl1251_set_partition(struct wl1251 *wl,
 			  u32 mem_start, u32 mem_size,
 			  u32 reg_start, u32 reg_size)
 {
-	u8 tx_buf[sizeof(u32) + 2 * sizeof(struct wl12xx_partition)];
-	struct wl12xx_partition *partition;
+	struct wl1251_partition *partition;
 	struct spi_transfer t;
 	struct spi_message m;
+	size_t len, cmd_len;
 	u32 *cmd;
-	size_t len;
 	int addr;
+
+	cmd_len = sizeof(u32) + 2 * sizeof(struct wl1251_partition);
+	cmd = kzalloc(cmd_len, GFP_KERNEL);
+	if (!cmd)
+		return -ENOMEM;
 
 	spi_message_init(&m);
 	memset(&t, 0, sizeof(t));
-	memset(tx_buf, 0, sizeof(tx_buf));
 
-	cmd = (u32 *) tx_buf;
-	partition = (struct wl12xx_partition *) (tx_buf + sizeof(u32));
+	partition = (struct wl1251_partition *) (cmd + 1);
 	addr = HW_ACCESS_PART0_SIZE_ADDR;
-	len = 2 * sizeof(struct wl12xx_partition);
+	len = 2 * sizeof(struct wl1251_partition);
 
 	*cmd |= WSPI_CMD_WRITE;
 	*cmd |= (len << WSPI_CMD_BYTE_LENGTH_OFFSET) & WSPI_CMD_BYTE_LENGTH;
 	*cmd |= addr & WSPI_CMD_BYTE_ADDR;
 
-	wl12xx_debug(DEBUG_SPI, "mem_start %08X mem_size %08X",
+	wl1251_debug(DEBUG_SPI, "mem_start %08X mem_size %08X",
 		     mem_start, mem_size);
-	wl12xx_debug(DEBUG_SPI, "reg_start %08X reg_size %08X",
+	wl1251_debug(DEBUG_SPI, "reg_start %08X reg_size %08X",
 		     reg_start, reg_size);
 
 	/* Make sure that the two partitions together don't exceed the
 	 * address range */
 	if ((mem_size + reg_size) > HW_ACCESS_MEMORY_MAX_RANGE) {
-		wl12xx_debug(DEBUG_SPI, "Total size exceeds maximum virtual"
+		wl1251_debug(DEBUG_SPI, "Total size exceeds maximum virtual"
 			     " address range.  Truncating partition[0].");
 		mem_size = HW_ACCESS_MEMORY_MAX_RANGE - reg_size;
-		wl12xx_debug(DEBUG_SPI, "mem_start %08X mem_size %08X",
+		wl1251_debug(DEBUG_SPI, "mem_start %08X mem_size %08X",
 			     mem_start, mem_size);
-		wl12xx_debug(DEBUG_SPI, "reg_start %08X reg_size %08X",
+		wl1251_debug(DEBUG_SPI, "reg_start %08X reg_size %08X",
 			     reg_start, reg_size);
 	}
 
@@ -213,23 +213,23 @@ void wl12xx_set_partition(struct wl12xx *wl,
 	    ((mem_start + mem_size) > reg_start)) {
 		/* Guarantee that the memory partition doesn't overlap the
 		 * registers partition */
-		wl12xx_debug(DEBUG_SPI, "End of partition[0] is "
+		wl1251_debug(DEBUG_SPI, "End of partition[0] is "
 			     "overlapping partition[1].  Adjusted.");
 		mem_size = reg_start - mem_start;
-		wl12xx_debug(DEBUG_SPI, "mem_start %08X mem_size %08X",
+		wl1251_debug(DEBUG_SPI, "mem_start %08X mem_size %08X",
 			     mem_start, mem_size);
-		wl12xx_debug(DEBUG_SPI, "reg_start %08X reg_size %08X",
+		wl1251_debug(DEBUG_SPI, "reg_start %08X reg_size %08X",
 			     reg_start, reg_size);
 	} else if ((reg_start < mem_start) &&
 		   ((reg_start + reg_size) > mem_start)) {
 		/* Guarantee that the register partition doesn't overlap the
 		 * memory partition */
-		wl12xx_debug(DEBUG_SPI, "End of partition[1] is"
+		wl1251_debug(DEBUG_SPI, "End of partition[1] is"
 			     " overlapping partition[0].  Adjusted.");
 		reg_size = mem_start - reg_start;
-		wl12xx_debug(DEBUG_SPI, "mem_start %08X mem_size %08X",
+		wl1251_debug(DEBUG_SPI, "mem_start %08X mem_size %08X",
 			     mem_start, mem_size);
-		wl12xx_debug(DEBUG_SPI, "reg_start %08X reg_size %08X",
+		wl1251_debug(DEBUG_SPI, "reg_start %08X reg_size %08X",
 			     reg_start, reg_size);
 	}
 
@@ -244,36 +244,46 @@ void wl12xx_set_partition(struct wl12xx *wl,
 	wl->virtual_mem_addr = 0;
 	wl->virtual_reg_addr = mem_size;
 
-	t.tx_buf = tx_buf;
-	t.len = sizeof(tx_buf);
+	t.tx_buf = cmd;
+	t.len = cmd_len;
 	spi_message_add_tail(&t, &m);
 
 	spi_sync(wl->spi, &m);
+
+	kfree(cmd);
+
+	return 0;
 }
 
-void wl12xx_spi_read(struct wl12xx *wl, int addr, void *buf,
-		     size_t len)
+void wl1251_spi_read(struct wl1251 *wl, int addr, void *buf,
+		     size_t len, bool fixed)
 {
 	struct spi_transfer t[3];
 	struct spi_message m;
-	char busy_buf[TNETWIF_READ_OFFSET_BYTES];
-	u32 cmd;
+	u8 *busy_buf;
+	u32 *cmd;
 
-	cmd = 0;
-	cmd |= WSPI_CMD_READ;
-	cmd |= (len << WSPI_CMD_BYTE_LENGTH_OFFSET) & WSPI_CMD_BYTE_LENGTH;
-	cmd |= addr & WSPI_CMD_BYTE_ADDR;
+	cmd = &wl->buffer_cmd;
+	busy_buf = wl->buffer_busyword;
+
+	*cmd = 0;
+	*cmd |= WSPI_CMD_READ;
+	*cmd |= (len << WSPI_CMD_BYTE_LENGTH_OFFSET) & WSPI_CMD_BYTE_LENGTH;
+	*cmd |= addr & WSPI_CMD_BYTE_ADDR;
+
+	if (fixed)
+		*cmd |= WSPI_CMD_FIXED;
 
 	spi_message_init(&m);
 	memset(t, 0, sizeof(t));
 
-	t[0].tx_buf = &cmd;
+	t[0].tx_buf = cmd;
 	t[0].len = 4;
 	spi_message_add_tail(&t[0], &m);
 
 	/* Busy and non busy words read */
 	t[1].rx_buf = busy_buf;
-	t[1].len = TNETWIF_READ_OFFSET_BYTES;
+	t[1].len = WL1251_BUSY_WORD_LEN;
 	spi_message_add_tail(&t[1], &m);
 
 	t[2].rx_buf = buf;
@@ -284,27 +294,32 @@ void wl12xx_spi_read(struct wl12xx *wl, int addr, void *buf,
 
 	/* FIXME: check busy words */
 
-	wl12xx_dump(DEBUG_SPI, "spi_read cmd -> ", &cmd, sizeof(cmd));
-	wl12xx_dump(DEBUG_SPI, "spi_read buf <- ", buf, len);
+	wl1251_dump(DEBUG_SPI, "spi_read cmd -> ", cmd, sizeof(*cmd));
+	wl1251_dump(DEBUG_SPI, "spi_read buf <- ", buf, len);
 }
 
-void wl12xx_spi_write(struct wl12xx *wl, int addr, void *buf,
-		      size_t len)
+void wl1251_spi_write(struct wl1251 *wl, int addr, void *buf,
+		      size_t len, bool fixed)
 {
 	struct spi_transfer t[2];
 	struct spi_message m;
-	u32 cmd;
+	u32 *cmd;
 
-	cmd = 0;
-	cmd |= WSPI_CMD_WRITE;
-	cmd |= (len << WSPI_CMD_BYTE_LENGTH_OFFSET) & WSPI_CMD_BYTE_LENGTH;
-	cmd |= addr & WSPI_CMD_BYTE_ADDR;
+	cmd = &wl->buffer_cmd;
+
+	*cmd = 0;
+	*cmd |= WSPI_CMD_WRITE;
+	*cmd |= (len << WSPI_CMD_BYTE_LENGTH_OFFSET) & WSPI_CMD_BYTE_LENGTH;
+	*cmd |= addr & WSPI_CMD_BYTE_ADDR;
+
+	if (fixed)
+		*cmd |= WSPI_CMD_FIXED;
 
 	spi_message_init(&m);
 	memset(t, 0, sizeof(t));
 
-	t[0].tx_buf = &cmd;
-	t[0].len = sizeof(cmd);
+	t[0].tx_buf = cmd;
+	t[0].len = sizeof(*cmd);
 	spi_message_add_tail(&t[0], &m);
 
 	t[1].tx_buf = buf;
@@ -313,46 +328,66 @@ void wl12xx_spi_write(struct wl12xx *wl, int addr, void *buf,
 
 	spi_sync(wl->spi, &m);
 
-	wl12xx_dump(DEBUG_SPI, "spi_write cmd -> ", &cmd, sizeof(cmd));
-	wl12xx_dump(DEBUG_SPI, "spi_write buf -> ", buf, len);
+	wl1251_dump(DEBUG_SPI, "spi_write cmd -> ", cmd, sizeof(*cmd));
+	wl1251_dump(DEBUG_SPI, "spi_write buf -> ", buf, len);
 }
 
-void wl12xx_spi_mem_read(struct wl12xx *wl, int addr, void *buf,
+void wl1251_spi_mem_read(struct wl1251 *wl, int addr, void *buf,
 			 size_t len)
 {
 	int physical;
 
-	physical = wl12xx_translate_mem_addr(wl, addr);
+	physical = wl1251_translate_mem_addr(wl, addr);
 
-	wl12xx_spi_read(wl, physical, buf, len);
+	wl1251_spi_read(wl, physical, buf, len, false);
 }
 
-void wl12xx_spi_mem_write(struct wl12xx *wl, int addr, void *buf,
+void wl1251_spi_mem_write(struct wl1251 *wl, int addr, void *buf,
 			  size_t len)
 {
 	int physical;
 
-	physical = wl12xx_translate_mem_addr(wl, addr);
+	physical = wl1251_translate_mem_addr(wl, addr);
 
-	wl12xx_spi_write(wl, physical, buf, len);
+	wl1251_spi_write(wl, physical, buf, len, false);
 }
 
-u32 wl12xx_mem_read32(struct wl12xx *wl, int addr)
+void wl1251_spi_reg_read(struct wl1251 *wl, int addr, void *buf, size_t len,
+			 bool fixed)
 {
-	return wl12xx_read32(wl, wl12xx_translate_mem_addr(wl, addr));
+	int physical;
+
+	physical = wl1251_translate_reg_addr(wl, addr);
+
+	wl1251_spi_read(wl, physical, buf, len, fixed);
 }
 
-void wl12xx_mem_write32(struct wl12xx *wl, int addr, u32 val)
+void wl1251_spi_reg_write(struct wl1251 *wl, int addr, void *buf, size_t len,
+			  bool fixed)
 {
-	wl12xx_write32(wl, wl12xx_translate_mem_addr(wl, addr), val);
+	int physical;
+
+	physical = wl1251_translate_reg_addr(wl, addr);
+
+	wl1251_spi_write(wl, physical, buf, len, fixed);
 }
 
-u32 wl12xx_reg_read32(struct wl12xx *wl, int addr)
+u32 wl1251_mem_read32(struct wl1251 *wl, int addr)
 {
-	return wl12xx_read32(wl, wl12xx_translate_reg_addr(wl, addr));
+	return wl1251_read32(wl, wl1251_translate_mem_addr(wl, addr));
 }
 
-void wl12xx_reg_write32(struct wl12xx *wl, int addr, u32 val)
+void wl1251_mem_write32(struct wl1251 *wl, int addr, u32 val)
 {
-	wl12xx_write32(wl, wl12xx_translate_reg_addr(wl, addr), val);
+	wl1251_write32(wl, wl1251_translate_mem_addr(wl, addr), val);
+}
+
+u32 wl1251_reg_read32(struct wl1251 *wl, int addr)
+{
+	return wl1251_read32(wl, wl1251_translate_reg_addr(wl, addr));
+}
+
+void wl1251_reg_write32(struct wl1251 *wl, int addr, u32 val)
+{
+	wl1251_write32(wl, wl1251_translate_reg_addr(wl, addr), val);
 }

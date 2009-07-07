@@ -342,6 +342,7 @@ static void ath_ani_calibrate(unsigned long data)
 	* don't calibrate when we're scanning.
 	* we are most likely not on our home channel.
 	*/
+	spin_lock(&sc->ani_lock);
 	if (sc->sc_flags & SC_OP_SCANNING)
 		goto set_timer;
 
@@ -405,6 +406,7 @@ static void ath_ani_calibrate(unsigned long data)
 	ath9k_ps_restore(sc);
 
 set_timer:
+	spin_unlock(&sc->ani_lock);
 	/*
 	* Set timer interval based on previous results.
 	* The interval must be the shortest necessary to satisfy ANI,
@@ -887,6 +889,7 @@ static void setup_ht_cap(struct ath_softc *sc,
 {
 #define	ATH9K_HT_CAP_MAXRXAMPDU_65536 0x3	/* 2 ^ 16 */
 #define	ATH9K_HT_CAP_MPDUDENSITY_8 0x6		/* 8 usec */
+	u8 tx_streams, rx_streams;
 
 	ht_info->ht_supported = true;
 	ht_info->cap = IEEE80211_HT_CAP_SUP_WIDTH_20_40 |
@@ -899,45 +902,43 @@ static void setup_ht_cap(struct ath_softc *sc,
 
 	/* set up supported mcs set */
 	memset(&ht_info->mcs, 0, sizeof(ht_info->mcs));
+	tx_streams = !(sc->tx_chainmask & (sc->tx_chainmask - 1)) ? 1 : 2;
+	rx_streams = !(sc->rx_chainmask & (sc->rx_chainmask - 1)) ? 1 : 2;
 
-	switch(sc->rx_chainmask) {
-	case 1:
-		ht_info->mcs.rx_mask[0] = 0xff;
-		break;
-	case 3:
-	case 5:
-	case 7:
-	default:
-		ht_info->mcs.rx_mask[0] = 0xff;
-		ht_info->mcs.rx_mask[1] = 0xff;
-		break;
+	if (tx_streams != rx_streams) {
+		DPRINTF(sc, ATH_DBG_CONFIG, "TX streams %d, RX streams: %d\n",
+			tx_streams, rx_streams);
+		ht_info->mcs.tx_params |= IEEE80211_HT_MCS_TX_RX_DIFF;
+		ht_info->mcs.tx_params |= ((tx_streams - 1) <<
+				IEEE80211_HT_MCS_TX_MAX_STREAMS_SHIFT);
 	}
 
-	ht_info->mcs.tx_params = IEEE80211_HT_MCS_TX_DEFINED;
+	ht_info->mcs.rx_mask[0] = 0xff;
+	if (rx_streams >= 2)
+		ht_info->mcs.rx_mask[1] = 0xff;
+
+	ht_info->mcs.tx_params |= IEEE80211_HT_MCS_TX_DEFINED;
 }
 
 static void ath9k_bss_assoc_info(struct ath_softc *sc,
 				 struct ieee80211_vif *vif,
 				 struct ieee80211_bss_conf *bss_conf)
 {
-	struct ath_vif *avp = (void *)vif->drv_priv;
 
 	if (bss_conf->assoc) {
 		DPRINTF(sc, ATH_DBG_CONFIG, "Bss Info ASSOC %d, bssid: %pM\n",
 			bss_conf->aid, sc->curbssid);
 
 		/* New association, store aid */
-		if (avp->av_opmode == NL80211_IFTYPE_STATION) {
-			sc->curaid = bss_conf->aid;
-			ath9k_hw_write_associd(sc);
+		sc->curaid = bss_conf->aid;
+		ath9k_hw_write_associd(sc);
 
-			/*
-			 * Request a re-configuration of Beacon related timers
-			 * on the receipt of the first Beacon frame (i.e.,
-			 * after time sync with the AP).
-			 */
-			sc->sc_flags |= SC_OP_BEACON_SYNC;
-		}
+		/*
+		 * Request a re-configuration of Beacon related timers
+		 * on the receipt of the first Beacon frame (i.e.,
+		 * after time sync with the AP).
+		 */
+		sc->sc_flags |= SC_OP_BEACON_SYNC;
 
 		/* Configure the beacon */
 		ath_beacon_config(sc, vif);
@@ -952,6 +953,8 @@ static void ath9k_bss_assoc_info(struct ath_softc *sc,
 	} else {
 		DPRINTF(sc, ATH_DBG_CONFIG, "Bss Info DISASSOC\n");
 		sc->curaid = 0;
+		/* Stop ANI */
+		del_timer_sync(&sc->ani.timer);
 	}
 }
 
@@ -1311,6 +1314,7 @@ static int ath_init(u16 devid, struct ath_softc *sc)
 	spin_lock_init(&sc->wiphy_lock);
 	spin_lock_init(&sc->sc_resetlock);
 	spin_lock_init(&sc->sc_serial_rw);
+	spin_lock_init(&sc->ani_lock);
 	mutex_init(&sc->mutex);
 	tasklet_init(&sc->intr_tq, ath9k_tasklet, (unsigned long)sc);
 	tasklet_init(&sc->bcon_tasklet, ath_beacon_tasklet,
@@ -2196,7 +2200,9 @@ static int ath9k_add_interface(struct ieee80211_hw *hw,
 
 	ath9k_hw_set_interrupts(sc->sc_ah, sc->imask);
 
-	if (conf->type == NL80211_IFTYPE_AP)
+	if (conf->type == NL80211_IFTYPE_AP    ||
+	    conf->type == NL80211_IFTYPE_ADHOC ||
+	    conf->type == NL80211_IFTYPE_MONITOR)
 		ath_start_ani(sc);
 
 out:
@@ -2681,9 +2687,9 @@ static void ath9k_sw_scan_start(struct ieee80211_hw *hw)
 	aphy->state = ATH_WIPHY_SCAN;
 	ath9k_wiphy_pause_all_forced(sc, aphy);
 
-	mutex_lock(&sc->mutex);
+	spin_lock_bh(&sc->ani_lock);
 	sc->sc_flags |= SC_OP_SCANNING;
-	mutex_unlock(&sc->mutex);
+	spin_unlock_bh(&sc->ani_lock);
 }
 
 static void ath9k_sw_scan_complete(struct ieee80211_hw *hw)
@@ -2691,11 +2697,11 @@ static void ath9k_sw_scan_complete(struct ieee80211_hw *hw)
 	struct ath_wiphy *aphy = hw->priv;
 	struct ath_softc *sc = aphy->sc;
 
-	mutex_lock(&sc->mutex);
+	spin_lock_bh(&sc->ani_lock);
 	aphy->state = ATH_WIPHY_ACTIVE;
 	sc->sc_flags &= ~SC_OP_SCANNING;
 	sc->sc_flags |= SC_OP_FULL_RESET;
-	mutex_unlock(&sc->mutex);
+	spin_unlock_bh(&sc->ani_lock);
 }
 
 struct ieee80211_ops ath9k_ops = {

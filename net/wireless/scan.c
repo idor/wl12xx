@@ -17,20 +17,33 @@
 
 #define IEEE80211_SCAN_RESULT_EXPIRE	(10 * HZ)
 
-void cfg80211_scan_done(struct cfg80211_scan_request *request, bool aborted)
+void __cfg80211_scan_done(struct work_struct *wk)
 {
+	struct cfg80211_registered_device *rdev;
+	struct cfg80211_scan_request *request;
 	struct net_device *dev;
 #ifdef CONFIG_WIRELESS_EXT
 	union iwreq_data wrqu;
 #endif
 
+	rdev = container_of(wk, struct cfg80211_registered_device,
+			    scan_done_wk);
+
+	mutex_lock(&rdev->mtx);
+	request = rdev->scan_req;
+
 	dev = dev_get_by_index(&init_net, request->ifidx);
 	if (!dev)
 		goto out;
 
-	WARN_ON(request != wiphy_to_dev(request->wiphy)->scan_req);
+	/*
+	 * This must be before sending the other events!
+	 * Otherwise, wpa_supplicant gets completely confused with
+	 * wext events.
+	 */
+	cfg80211_sme_scan_done(dev);
 
-	if (aborted)
+	if (request->aborted)
 		nl80211_send_scan_aborted(wiphy_to_dev(request->wiphy), dev);
 	else
 		nl80211_send_scan_done(wiphy_to_dev(request->wiphy), dev);
@@ -38,7 +51,7 @@ void cfg80211_scan_done(struct cfg80211_scan_request *request, bool aborted)
 	wiphy_to_dev(request->wiphy)->scan_req = NULL;
 
 #ifdef CONFIG_WIRELESS_EXT
-	if (!aborted) {
+	if (!request->aborted) {
 		memset(&wrqu, 0, sizeof(wrqu));
 
 		wireless_send_event(dev, SIOCGIWSCAN, &wrqu, NULL);
@@ -48,7 +61,23 @@ void cfg80211_scan_done(struct cfg80211_scan_request *request, bool aborted)
 	dev_put(dev);
 
  out:
+	cfg80211_unlock_rdev(rdev);
 	kfree(request);
+}
+
+void cfg80211_scan_done(struct cfg80211_scan_request *request, bool aborted)
+{
+	struct net_device *dev = dev_get_by_index(&init_net, request->ifidx);
+	if (WARN_ON(!dev)) {
+		kfree(request);
+		return;
+	}
+
+	WARN_ON(request != wiphy_to_dev(request->wiphy)->scan_req);
+
+	request->aborted = aborted;
+	schedule_work(&wiphy_to_dev(request->wiphy)->scan_done_wk);
+	dev_put(dev);
 }
 EXPORT_SYMBOL(cfg80211_scan_done);
 
@@ -62,6 +91,8 @@ static void bss_release(struct kref *ref)
 
 	if (bss->ies_allocated)
 		kfree(bss->pub.information_elements);
+
+	BUG_ON(atomic_read(&bss->hold));
 
 	kfree(bss);
 }
@@ -85,8 +116,9 @@ void cfg80211_bss_expire(struct cfg80211_registered_device *dev)
 	bool expired = false;
 
 	list_for_each_entry_safe(bss, tmp, &dev->bss_list, list) {
-		if (bss->hold ||
-		    !time_after(jiffies, bss->ts + IEEE80211_SCAN_RESULT_EXPIRE))
+		if (atomic_read(&bss->hold))
+			continue;
+		if (!time_after(jiffies, bss->ts + IEEE80211_SCAN_RESULT_EXPIRE))
 			continue;
 		list_del(&bss->list);
 		rb_erase(&bss->rbn, &dev->bss_tree);
@@ -547,30 +579,6 @@ void cfg80211_unlink_bss(struct wiphy *wiphy, struct cfg80211_bss *pub)
 }
 EXPORT_SYMBOL(cfg80211_unlink_bss);
 
-void cfg80211_hold_bss(struct cfg80211_bss *pub)
-{
-	struct cfg80211_internal_bss *bss;
-
-	if (!pub)
-		return;
-
-	bss = container_of(pub, struct cfg80211_internal_bss, pub);
-	bss->hold = true;
-}
-EXPORT_SYMBOL(cfg80211_hold_bss);
-
-void cfg80211_unhold_bss(struct cfg80211_bss *pub)
-{
-	struct cfg80211_internal_bss *bss;
-
-	if (!pub)
-		return;
-
-	bss = container_of(pub, struct cfg80211_internal_bss, pub);
-	bss->hold = false;
-}
-EXPORT_SYMBOL(cfg80211_unhold_bss);
-
 #ifdef CONFIG_WIRELESS_EXT
 int cfg80211_wext_siwscan(struct net_device *dev,
 			  struct iw_request_info *info,
@@ -648,9 +656,10 @@ int cfg80211_wext_siwscan(struct net_device *dev,
 	if (err) {
 		rdev->scan_req = NULL;
 		kfree(creq);
-	}
+	} else
+		nl80211_send_scan_start(rdev, dev);
  out:
-	cfg80211_put_dev(rdev);
+	cfg80211_unlock_rdev(rdev);
 	return err;
 }
 EXPORT_SYMBOL_GPL(cfg80211_wext_siwscan);
@@ -959,7 +968,7 @@ int cfg80211_wext_giwscan(struct net_device *dev,
 	}
 
  out:
-	cfg80211_put_dev(rdev);
+	cfg80211_unlock_rdev(rdev);
 	return res;
 }
 EXPORT_SYMBOL_GPL(cfg80211_wext_giwscan);

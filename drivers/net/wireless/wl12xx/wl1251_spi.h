@@ -1,5 +1,5 @@
 /*
- * This file is part of wl12xx
+ * This file is part of wl1251
  *
  * Copyright (c) 1998-2007 Texas Instruments Incorporated
  * Copyright (C) 2008 Nokia Corporation
@@ -22,11 +22,11 @@
  *
  */
 
-#ifndef __WL12XX_SPI_H__
-#define __WL12XX_SPI_H__
+#ifndef __WL1251_SPI_H__
+#define __WL1251_SPI_H__
 
-#include "cmd.h"
-#include "acx.h"
+#include "wl1251_cmd.h"
+#include "wl1251_acx.h"
 #include "reg.h"
 
 #define HW_ACCESS_MEMORY_MAX_RANGE		0x1FFC0
@@ -65,45 +65,51 @@
 
 #define WSPI_INIT_CMD_LEN           8
 
-#define TNETWIF_READ_OFFSET_BYTES  8
 #define HW_ACCESS_WSPI_FIXED_BUSY_LEN \
-		((TNETWIF_READ_OFFSET_BYTES - 4) / sizeof(u32))
+		((WL1251_BUSY_WORD_LEN - 4) / sizeof(u32))
 #define HW_ACCESS_WSPI_INIT_CMD_MASK  0
 
 
 /* Raw target IO, address is not translated */
-void wl12xx_spi_read(struct wl12xx *wl, int addr, void *buf, size_t len);
-void wl12xx_spi_write(struct wl12xx *wl, int addr, void *buf, size_t len);
+void wl1251_spi_write(struct wl1251 *wl, int addr, void *buf,
+		      size_t len, bool fixed);
+void wl1251_spi_read(struct wl1251 *wl, int addr, void *buf,
+		     size_t len, bool fixed);
 
 /* Memory target IO, address is tranlated to partition 0 */
-void wl12xx_spi_mem_read(struct wl12xx *wl, int addr, void *buf, size_t len);
-void wl12xx_spi_mem_write(struct wl12xx *wl, int addr, void *buf, size_t len);
-u32 wl12xx_mem_read32(struct wl12xx *wl, int addr);
-void wl12xx_mem_write32(struct wl12xx *wl, int addr, u32 val);
+void wl1251_spi_mem_read(struct wl1251 *wl, int addr, void *buf, size_t len);
+void wl1251_spi_mem_write(struct wl1251 *wl, int addr, void *buf, size_t len);
+u32 wl1251_mem_read32(struct wl1251 *wl, int addr);
+void wl1251_mem_write32(struct wl1251 *wl, int addr, u32 val);
 
 /* Registers IO */
-u32 wl12xx_reg_read32(struct wl12xx *wl, int addr);
-void wl12xx_reg_write32(struct wl12xx *wl, int addr, u32 val);
+void wl1251_spi_reg_read(struct wl1251 *wl, int addr, void *buf, size_t len,
+			 bool fixed);
+void wl1251_spi_reg_write(struct wl1251 *wl, int addr, void *buf, size_t len,
+			  bool fixed);
+u32 wl1251_reg_read32(struct wl1251 *wl, int addr);
+void wl1251_reg_write32(struct wl1251 *wl, int addr, u32 val);
 
 /* INIT and RESET words */
-void wl12xx_spi_reset(struct wl12xx *wl);
-void wl12xx_spi_init(struct wl12xx *wl);
-void wl12xx_set_partition(struct wl12xx *wl,
-			  u32 part_start, u32 part_size,
-			  u32 reg_start,  u32 reg_size);
+void wl1251_spi_reset(struct wl1251 *wl);
+void wl1251_spi_init(struct wl1251 *wl);
+int wl1251_set_partition(struct wl1251 *wl,
+			 u32 part_start, u32 part_size,
+			 u32 reg_start,  u32 reg_size);
 
-static inline u32 wl12xx_read32(struct wl12xx *wl, int addr)
+static inline u32 wl1251_read32(struct wl1251 *wl, int addr)
 {
-	u32 response;
+	wl1251_spi_read(wl, addr, &wl->buffer_32,
+			sizeof(wl->buffer_32), false);
 
-	wl12xx_spi_read(wl, addr, &response, sizeof(u32));
-
-	return response;
+	return wl->buffer_32;
 }
 
-static inline void wl12xx_write32(struct wl12xx *wl, int addr, u32 val)
+static inline void wl1251_write32(struct wl1251 *wl, int addr, u32 val)
 {
-	wl12xx_spi_write(wl, addr, &val, sizeof(u32));
+	wl->buffer_32 = val;
+	wl1251_spi_write(wl, addr, &wl->buffer_32,
+			 sizeof(wl->buffer_32), false);
 }
 
-#endif /* __WL12XX_SPI_H__ */
+#endif /* __WL1251_SPI_H__ */

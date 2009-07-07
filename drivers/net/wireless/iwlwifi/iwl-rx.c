@@ -927,12 +927,13 @@ static void iwl_pass_packet_to_mac80211(struct iwl_priv *priv,
 	hdr = (struct ieee80211_hdr *)rxb->skb->data;
 
 	/*  in case of HW accelerated crypto and bad decryption, drop */
-	if (!priv->hw_params.sw_crypto &&
+	if (!priv->cfg->mod_params->sw_crypto &&
 	    iwl_set_decrypted_flag(priv, hdr, ampdu_status, stats))
 		return;
 
 	iwl_update_rx_stats(priv, le16_to_cpu(hdr->frame_control), len);
-	ieee80211_rx_irqsafe(priv->hw, rxb->skb, stats);
+	memcpy(IEEE80211_SKB_RXCB(rxb->skb), stats, sizeof(*stats));
+	ieee80211_rx_irqsafe(priv->hw, rxb->skb);
 	priv->alloc_rxb_skb--;
 	rxb->skb = NULL;
 }

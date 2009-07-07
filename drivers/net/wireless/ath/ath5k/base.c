@@ -218,6 +218,8 @@ static struct pci_driver ath5k_pci_driver = {
  * Prototypes - MAC 802.11 stack related functions
  */
 static int ath5k_tx(struct ieee80211_hw *hw, struct sk_buff *skb);
+static int ath5k_tx_queue(struct ieee80211_hw *hw, struct sk_buff *skb,
+		struct ath5k_txq *txq);
 static int ath5k_reset(struct ath5k_softc *sc, struct ieee80211_channel *chan);
 static int ath5k_reset_wake(struct ath5k_softc *sc);
 static int ath5k_start(struct ieee80211_hw *hw);
@@ -248,6 +250,8 @@ static void ath5k_bss_info_changed(struct ieee80211_hw *hw,
 		struct ieee80211_vif *vif,
 		struct ieee80211_bss_conf *bss_conf,
 		u32 changes);
+static void ath5k_sw_scan_start(struct ieee80211_hw *hw);
+static void ath5k_sw_scan_complete(struct ieee80211_hw *hw);
 
 static const struct ieee80211_ops ath5k_hw_ops = {
 	.tx 		= ath5k_tx,
@@ -265,6 +269,8 @@ static const struct ieee80211_ops ath5k_hw_ops = {
 	.set_tsf 	= ath5k_set_tsf,
 	.reset_tsf 	= ath5k_reset_tsf,
 	.bss_info_changed = ath5k_bss_info_changed,
+	.sw_scan_start	= ath5k_sw_scan_start,
+	.sw_scan_complete = ath5k_sw_scan_complete,
 };
 
 /*
@@ -297,7 +303,8 @@ static void	ath5k_desc_free(struct ath5k_softc *sc,
 static int 	ath5k_rxbuf_setup(struct ath5k_softc *sc,
 				struct ath5k_buf *bf);
 static int 	ath5k_txbuf_setup(struct ath5k_softc *sc,
-				struct ath5k_buf *bf);
+				struct ath5k_buf *bf,
+				struct ath5k_txq *txq);
 static inline void ath5k_txbuf_free(struct ath5k_softc *sc,
 				struct ath5k_buf *bf)
 {
@@ -512,6 +519,7 @@ ath5k_pci_probe(struct pci_dev *pdev,
 	/* Initialize driver private data */
 	SET_IEEE80211_DEV(hw, &pdev->dev);
 	hw->flags = IEEE80211_HW_RX_INCLUDES_FCS |
+		    IEEE80211_HW_HOST_BROADCAST_PS_BUFFERING |
 		    IEEE80211_HW_SIGNAL_DBM |
 		    IEEE80211_HW_NOISE_DBM;
 
@@ -666,7 +674,6 @@ ath5k_pci_suspend(struct pci_dev *pdev, pm_message_t state)
 
 	ath5k_led_off(sc);
 
-	free_irq(pdev->irq, sc);
 	pci_save_state(pdev);
 	pci_disable_device(pdev);
 	pci_set_power_state(pdev, PCI_D3hot);
@@ -694,18 +701,8 @@ ath5k_pci_resume(struct pci_dev *pdev)
 	 */
 	pci_write_config_byte(pdev, 0x41, 0);
 
-	err = request_irq(pdev->irq, ath5k_intr, IRQF_SHARED, "ath", sc);
-	if (err) {
-		ATH5K_ERR(sc, "request_irq failed\n");
-		goto err_no_irq;
-	}
-
 	ath5k_led_enable(sc);
 	return 0;
-
-err_no_irq:
-	pci_disable_device(pdev);
-	return err;
 }
 #endif /* CONFIG_PM */
 
@@ -785,12 +782,18 @@ ath5k_attach(struct pci_dev *pdev, struct ieee80211_hw *hw)
 		goto err_desc;
 	}
 	sc->bhalq = ret;
+	sc->cabq = ath5k_txq_setup(sc, AR5K_TX_QUEUE_CAB, 0);
+	if (IS_ERR(sc->cabq)) {
+		ATH5K_ERR(sc, "can't setup cab queue\n");
+		ret = PTR_ERR(sc->cabq);
+		goto err_bhal;
+	}
 
 	sc->txq = ath5k_txq_setup(sc, AR5K_TX_QUEUE_DATA, AR5K_WME_AC_BK);
 	if (IS_ERR(sc->txq)) {
 		ATH5K_ERR(sc, "can't setup xmit queue\n");
 		ret = PTR_ERR(sc->txq);
-		goto err_bhal;
+		goto err_queues;
 	}
 
 	tasklet_init(&sc->rxtq, ath5k_tasklet_rx, (unsigned long)sc);
@@ -1228,10 +1231,10 @@ ath5k_rxbuf_setup(struct ath5k_softc *sc, struct ath5k_buf *bf)
 }
 
 static int
-ath5k_txbuf_setup(struct ath5k_softc *sc, struct ath5k_buf *bf)
+ath5k_txbuf_setup(struct ath5k_softc *sc, struct ath5k_buf *bf,
+		  struct ath5k_txq *txq)
 {
 	struct ath5k_hw *ah = sc->ah;
-	struct ath5k_txq *txq = sc->txq;
 	struct ath5k_desc *ds = bf->desc;
 	struct sk_buff *skb = bf->skb;
 	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
@@ -1901,7 +1904,8 @@ accept:
 		if (sc->opmode == NL80211_IFTYPE_ADHOC)
 			ath5k_check_ibss_tsf(sc, skb, &rxs);
 
-		__ieee80211_rx(sc->hw, skb, &rxs);
+		memcpy(IEEE80211_SKB_RXCB(skb), &rxs, sizeof(rxs));
+		ieee80211_rx(sc->hw, skb);
 
 		bf->skb = next_skb;
 		bf->skbaddr = next_skb_addr;
@@ -2078,13 +2082,6 @@ err_unmap:
 	return ret;
 }
 
-static void ath5k_beacon_disable(struct ath5k_softc *sc)
-{
-	sc->imask &= ~(AR5K_INT_BMISS | AR5K_INT_SWBA);
-	ath5k_hw_set_imr(sc->ah, sc->imask);
-	ath5k_hw_stop_tx_dma(sc->ah, sc->bhalq);
-}
-
 /*
  * Transmit a beacon frame at SWBA.  Dynamic updates to the
  * frame contents are done as needed and the slot time is
@@ -2098,6 +2095,7 @@ ath5k_beacon_send(struct ath5k_softc *sc)
 {
 	struct ath5k_buf *bf = sc->bbuf;
 	struct ath5k_hw *ah = sc->ah;
+	struct sk_buff *skb;
 
 	ATH5K_DBG_UNLIMIT(sc, ATH5K_DEBUG_BEACON, "in beacon_send\n");
 
@@ -2150,6 +2148,12 @@ ath5k_beacon_send(struct ath5k_softc *sc)
 	ath5k_hw_start_tx_dma(ah, sc->bhalq);
 	ATH5K_DBG(sc, ATH5K_DEBUG_BEACON, "TXDP[%u] = %llx (%p)\n",
 		sc->bhalq, (unsigned long long)bf->daddr, bf->desc);
+
+	skb = ieee80211_get_buffered_bc(sc->hw, sc->vif);
+	while (skb) {
+		ath5k_tx_queue(sc->hw, skb, sc->cabq);
+		skb = ieee80211_get_buffered_bc(sc->hw, sc->vif);
+	}
 
 	sc->bsent++;
 }
@@ -2271,13 +2275,11 @@ ath5k_beacon_config(struct ath5k_softc *sc)
 	struct ath5k_hw *ah = sc->ah;
 	unsigned long flags;
 
-	ath5k_hw_set_imr(ah, 0);
+	spin_lock_irqsave(&sc->block, flags);
 	sc->bmisscount = 0;
 	sc->imask &= ~(AR5K_INT_BMISS | AR5K_INT_SWBA);
 
-	if (sc->opmode == NL80211_IFTYPE_ADHOC ||
-			sc->opmode == NL80211_IFTYPE_MESH_POINT ||
-			sc->opmode == NL80211_IFTYPE_AP) {
+	if (sc->enable_beacon) {
 		/*
 		 * In IBSS mode we use a self-linked tx descriptor and let the
 		 * hardware send the beacons automatically. We have to load it
@@ -2290,16 +2292,17 @@ ath5k_beacon_config(struct ath5k_softc *sc)
 		sc->imask |= AR5K_INT_SWBA;
 
 		if (sc->opmode == NL80211_IFTYPE_ADHOC) {
-			if (ath5k_hw_hasveol(ah)) {
-				spin_lock_irqsave(&sc->block, flags);
+			if (ath5k_hw_hasveol(ah))
 				ath5k_beacon_send(sc);
-				spin_unlock_irqrestore(&sc->block, flags);
-			}
 		} else
 			ath5k_beacon_update_timers(sc, -1);
+	} else {
+		ath5k_hw_stop_tx_dma(sc->ah, sc->bhalq);
 	}
 
 	ath5k_hw_set_imr(ah, sc->imask);
+	mmiowb();
+	spin_unlock_irqrestore(&sc->block, flags);
 }
 
 static void ath5k_tasklet_beacon(unsigned long data)
@@ -2598,6 +2601,14 @@ static int
 ath5k_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
 {
 	struct ath5k_softc *sc = hw->priv;
+
+	return ath5k_tx_queue(hw, skb, sc->txq);
+}
+
+static int ath5k_tx_queue(struct ieee80211_hw *hw, struct sk_buff *skb,
+			  struct ath5k_txq *txq)
+{
+	struct ath5k_softc *sc = hw->priv;
 	struct ath5k_buf *bf;
 	unsigned long flags;
 	int hdrlen;
@@ -2641,7 +2652,7 @@ ath5k_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
 
 	bf->skb = skb;
 
-	if (ath5k_txbuf_setup(sc, bf)) {
+	if (ath5k_txbuf_setup(sc, bf, txq)) {
 		bf->skb = NULL;
 		spin_lock_irqsave(&sc->txbuflock, flags);
 		list_add_tail(&bf->list, &sc->txbuf);
@@ -2676,7 +2687,7 @@ ath5k_reset(struct ath5k_softc *sc, struct ieee80211_channel *chan)
 		sc->curchan = chan;
 		sc->curband = &sc->sbands[chan->band];
 	}
-	ret = ath5k_hw_reset(ah, sc->opmode, sc->curchan, true);
+	ret = ath5k_hw_reset(ah, sc->opmode, sc->curchan, chan != NULL);
 	if (ret) {
 		ATH5K_ERR(sc, "can't reset hardware (%d)\n", ret);
 		goto err;
@@ -2776,7 +2787,6 @@ ath5k_remove_interface(struct ieee80211_hw *hw,
 		goto end;
 
 	ath5k_hw_set_lladdr(sc->ah, mac);
-	ath5k_beacon_disable(sc);
 	sc->vif = NULL;
 end:
 	mutex_unlock(&sc->lock);
@@ -3105,25 +3115,6 @@ out:
 	return ret;
 }
 
-/*
- *  Update the beacon and reconfigure the beacon queues.
- */
-static void
-ath5k_beacon_reconfig(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
-{
-	int ret;
-	unsigned long flags;
-	struct ath5k_softc *sc = hw->priv;
-
-	spin_lock_irqsave(&sc->block, flags);
-	ret = ath5k_beacon_update(hw, vif);
-	spin_unlock_irqrestore(&sc->block, flags);
-	if (ret == 0) {
-		ath5k_beacon_config(sc);
-		mmiowb();
-	}
-}
-
 static void
 set_beacon_filter(struct ieee80211_hw *hw, bool enable)
 {
@@ -3146,6 +3137,7 @@ static void ath5k_bss_info_changed(struct ieee80211_hw *hw,
 {
 	struct ath5k_softc *sc = hw->priv;
 	struct ath5k_hw *ah = sc->ah;
+	unsigned long flags;
 
 	mutex_lock(&sc->lock);
 	if (WARN_ON(sc->vif != vif))
@@ -3167,15 +3159,37 @@ static void ath5k_bss_info_changed(struct ieee80211_hw *hw,
 		sc->assoc = bss_conf->assoc;
 		if (sc->opmode == NL80211_IFTYPE_STATION)
 			set_beacon_filter(hw, sc->assoc);
+		ath5k_hw_set_ledstate(sc->ah, sc->assoc ?
+			AR5K_LED_ASSOC : AR5K_LED_INIT);
 	}
 
-	if (changes & BSS_CHANGED_BEACON &&
-	    (vif->type == NL80211_IFTYPE_ADHOC ||
-	     vif->type == NL80211_IFTYPE_MESH_POINT ||
-	     vif->type == NL80211_IFTYPE_AP)) {
-		ath5k_beacon_reconfig(hw, vif);
+	if (changes & BSS_CHANGED_BEACON) {
+		spin_lock_irqsave(&sc->block, flags);
+		ath5k_beacon_update(hw, vif);
+		spin_unlock_irqrestore(&sc->block, flags);
 	}
+
+	if (changes & BSS_CHANGED_BEACON_ENABLED)
+		sc->enable_beacon = bss_conf->enable_beacon;
+
+	if (changes & (BSS_CHANGED_BEACON | BSS_CHANGED_BEACON_ENABLED |
+		       BSS_CHANGED_BEACON_INT))
+		ath5k_beacon_config(sc);
 
  unlock:
 	mutex_unlock(&sc->lock);
+}
+
+static void ath5k_sw_scan_start(struct ieee80211_hw *hw)
+{
+	struct ath5k_softc *sc = hw->priv;
+	if (!sc->assoc)
+		ath5k_hw_set_ledstate(sc->ah, AR5K_LED_SCAN);
+}
+
+static void ath5k_sw_scan_complete(struct ieee80211_hw *hw)
+{
+	struct ath5k_softc *sc = hw->priv;
+	ath5k_hw_set_ledstate(sc->ah, sc->assoc ?
+		AR5K_LED_ASSOC : AR5K_LED_INIT);
 }

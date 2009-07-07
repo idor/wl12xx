@@ -577,7 +577,8 @@ static void iwl3945_pass_packet_to_mac80211(struct iwl_priv *priv,
 	if (ieee80211_is_data(hdr->frame_control))
 		priv->rxtxpackets += len;
 #endif
-	ieee80211_rx_irqsafe(priv->hw, rxb->skb, stats);
+	memcpy(IEEE80211_SKB_RXCB(rxb->skb), stats, sizeof(*stats));
+	ieee80211_rx_irqsafe(priv->hw, rxb->skb);
 	rxb->skb = NULL;
 }
 
@@ -1986,7 +1987,7 @@ static int iwl3945_commit_rxon(struct iwl_priv *priv)
 	staging_rxon->reserved4 = 0;
 	staging_rxon->reserved5 = 0;
 
-	iwl_set_rxon_hwcrypto(priv, !priv->hw_params.sw_crypto);
+	iwl_set_rxon_hwcrypto(priv, !iwl3945_mod_params.sw_crypto);
 
 	/* Apply the new configuration */
 	rc = iwl_send_cmd_pdu(priv, REPLY_RXON,
@@ -2562,6 +2563,7 @@ int iwl3945_hw_set_hw_params(struct iwl_priv *priv)
 	priv->hw_params.bcast_sta_id = IWL3945_BROADCAST_ID;
 
 	priv->hw_params.rx_wrt_ptr_reg = FH39_RSCSR_CHNL0_WPTR;
+	priv->hw_params.max_beacon_itrvl = IWL39_MAX_UCODE_BEACON_INTERVAL;
 
 	return 0;
 }

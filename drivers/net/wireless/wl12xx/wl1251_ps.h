@@ -1,7 +1,11 @@
+#ifndef __WL1251_PS_H__
+#define __WL1251_PS_H__
+
 /*
- * This file is part of wl12xx
+ * This file is part of wl1251
  *
- * Copyright (C) 2009 Nokia Corporation
+ * Copyright (c) 1998-2007 Texas Instruments Incorporated
+ * Copyright (C) 2008 Nokia Corporation
  *
  * Contact: Kalle Valo <kalle.valo@nokia.com>
  *
@@ -21,20 +25,12 @@
  *
  */
 
-#ifndef __WL12XX_INIT_H__
-#define __WL12XX_INIT_H__
+#include "wl1251.h"
+#include "wl1251_acx.h"
 
-#include "wl12xx.h"
+int wl1251_ps_set_mode(struct wl1251 *wl, enum wl1251_cmd_ps_mode mode);
+void wl1251_ps_elp_sleep(struct wl1251 *wl);
+int wl1251_ps_elp_wakeup(struct wl1251 *wl);
 
-int wl12xx_hw_init_hwenc_config(struct wl12xx *wl);
-int wl12xx_hw_init_templates_config(struct wl12xx *wl);
-int wl12xx_hw_init_mem_config(struct wl12xx *wl);
-int wl12xx_hw_init_rx_config(struct wl12xx *wl, u32 config, u32 filter);
-int wl12xx_hw_init_phy_config(struct wl12xx *wl);
-int wl12xx_hw_init_beacon_filter(struct wl12xx *wl);
-int wl12xx_hw_init_pta(struct wl12xx *wl);
-int wl12xx_hw_init_energy_detection(struct wl12xx *wl);
-int wl12xx_hw_init_beacon_broadcast(struct wl12xx *wl);
-int wl12xx_hw_init_power_auth(struct wl12xx *wl);
 
-#endif
+#endif /* __WL1251_PS_H__ */

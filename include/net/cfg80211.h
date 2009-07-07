@@ -555,6 +555,7 @@ struct cfg80211_scan_request {
 	/* internal */
 	struct wiphy *wiphy;
 	int ifidx;
+	bool aborted;
 };
 
 /**
@@ -584,7 +585,6 @@ enum cfg80211_signal_type {
  *	is no guarantee that these are well-formed!)
  * @len_information_elements: total length of the information elements
  * @signal: signal strength value (type depends on the wiphy's signal_type)
- * @hold: BSS should not expire
  * @free_priv: function pointer to free private data
  * @priv: private area for driver use, has at least wiphy->bss_priv_size bytes
  */
@@ -605,37 +605,54 @@ struct cfg80211_bss {
 };
 
 /**
+ * ieee80211_bss_get_ie - find IE with given ID
+ * @bss: the bss to search
+ * @ie: the IE ID
+ * Returns %NULL if not found.
+ */
+const u8 *ieee80211_bss_get_ie(struct cfg80211_bss *bss, u8 ie);
+
+
+/**
+ * struct cfg80211_crypto_settings - Crypto settings
+ * @wpa_versions: indicates which, if any, WPA versions are enabled
+ *	(from enum nl80211_wpa_versions)
+ * @cipher_group: group key cipher suite (or 0 if unset)
+ * @n_ciphers_pairwise: number of AP supported unicast ciphers
+ * @ciphers_pairwise: unicast key cipher suites
+ * @n_akm_suites: number of AKM suites
+ * @akm_suites: AKM suites
+ * @control_port: Whether user space controls IEEE 802.1X port, i.e.,
+ *	sets/clears %NL80211_STA_FLAG_AUTHORIZED. If true, the driver is
+ *	required to assume that the port is unauthorized until authorized by
+ *	user space. Otherwise, port is marked authorized by default.
+ */
+struct cfg80211_crypto_settings {
+	u32 wpa_versions;
+	u32 cipher_group;
+	int n_ciphers_pairwise;
+	u32 ciphers_pairwise[NL80211_MAX_NR_CIPHER_SUITES];
+	int n_akm_suites;
+	u32 akm_suites[NL80211_MAX_NR_AKM_SUITES];
+	bool control_port;
+};
+
+/**
  * struct cfg80211_auth_request - Authentication request data
  *
  * This structure provides information needed to complete IEEE 802.11
  * authentication.
- * NOTE: This structure will likely change when more code from mac80211 is
- * moved into cfg80211 so that non-mac80211 drivers can benefit from it, too.
- * Before using this in a driver that does not use mac80211, it would be better
- * to check the status of that work and better yet, volunteer to work on it.
  *
- * @chan: The channel to use or %NULL if not specified (auto-select based on
- *	scan results)
- * @peer_addr: The address of the peer STA (AP BSSID in infrastructure case);
- *	this field is required to be present; if the driver wants to help with
- *	BSS selection, it should use (yet to be added) MLME event to allow user
- *	space SME to be notified of roaming candidate, so that the SME can then
- *	use the authentication request with the recommended BSSID and whatever
- *	other data may be needed for authentication/association
- * @ssid: SSID or %NULL if not yet available
- * @ssid_len: Length of ssid in octets
+ * @bss: The BSS to authenticate with.
  * @auth_type: Authentication type (algorithm)
  * @ie: Extra IEs to add to Authentication frame or %NULL
  * @ie_len: Length of ie buffer in octets
  */
 struct cfg80211_auth_request {
-	struct ieee80211_channel *chan;
-	u8 *peer_addr;
-	const u8 *ssid;
-	size_t ssid_len;
-	enum nl80211_auth_type auth_type;
+	struct cfg80211_bss *bss;
 	const u8 *ie;
 	size_t ie_len;
+	enum nl80211_auth_type auth_type;
 };
 
 /**
@@ -643,35 +660,19 @@ struct cfg80211_auth_request {
  *
  * This structure provides information needed to complete IEEE 802.11
  * (re)association.
- * NOTE: This structure will likely change when more code from mac80211 is
- * moved into cfg80211 so that non-mac80211 drivers can benefit from it, too.
- * Before using this in a driver that does not use mac80211, it would be better
- * to check the status of that work and better yet, volunteer to work on it.
- *
- * @chan: The channel to use or %NULL if not specified (auto-select based on
- *	scan results)
- * @peer_addr: The address of the peer STA (AP BSSID); this field is required
- *	to be present and the STA must be in State 2 (authenticated) with the
- *	peer STA
- * @ssid: SSID
- * @ssid_len: Length of ssid in octets
+ * @bss: The BSS to associate with.
  * @ie: Extra IEs to add to (Re)Association Request frame or %NULL
  * @ie_len: Length of ie buffer in octets
  * @use_mfp: Use management frame protection (IEEE 802.11w) in this association
- * @control_port: Whether user space controls IEEE 802.1X port, i.e.,
- *	sets/clears %NL80211_STA_FLAG_AUTHORIZED. If true, the driver is
- *	required to assume that the port is unauthorized until authorized by
- *	user space. Otherwise, port is marked authorized by default.
+ * @crypto: crypto settings
+ * @prev_bssid: previous BSSID, if not %NULL use reassociate frame
  */
 struct cfg80211_assoc_request {
-	struct ieee80211_channel *chan;
-	u8 *peer_addr;
-	const u8 *ssid;
-	size_t ssid_len;
-	const u8 *ie;
+	struct cfg80211_bss *bss;
+	const u8 *ie, *prev_bssid;
 	size_t ie_len;
+	struct cfg80211_crypto_settings crypto;
 	bool use_mfp;
-	bool control_port;
 };
 
 /**
@@ -680,16 +681,16 @@ struct cfg80211_assoc_request {
  * This structure provides information needed to complete IEEE 802.11
  * deauthentication.
  *
- * @peer_addr: The address of the peer STA (AP BSSID); this field is required
- *	to be present and the STA must be authenticated with the peer STA
+ * @bss: the BSS to deauthenticate from
  * @ie: Extra IEs to add to Deauthentication frame or %NULL
  * @ie_len: Length of ie buffer in octets
+ * @reason_code: The reason code for the deauthentication
  */
 struct cfg80211_deauth_request {
-	u8 *peer_addr;
-	u16 reason_code;
+	struct cfg80211_bss *bss;
 	const u8 *ie;
 	size_t ie_len;
+	u16 reason_code;
 };
 
 /**
@@ -698,16 +699,16 @@ struct cfg80211_deauth_request {
  * This structure provides information needed to complete IEEE 802.11
  * disassocation.
  *
- * @peer_addr: The address of the peer STA (AP BSSID); this field is required
- *	to be present and the STA must be associated with the peer STA
+ * @bss: the BSS to disassociate from
  * @ie: Extra IEs to add to Disassociation frame or %NULL
  * @ie_len: Length of ie buffer in octets
+ * @reason_code: The reason code for the disassociation
  */
 struct cfg80211_disassoc_request {
-	u8 *peer_addr;
-	u16 reason_code;
+	struct cfg80211_bss *bss;
 	const u8 *ie;
 	size_t ie_len;
+	u16 reason_code;
 };
 
 /**
@@ -738,6 +739,36 @@ struct cfg80211_ibss_params {
 };
 
 /**
+ * struct cfg80211_connect_params - Connection parameters
+ *
+ * This structure provides information needed to complete IEEE 802.11
+ * authentication and association.
+ *
+ * @channel: The channel to use or %NULL if not specified (auto-select based
+ *	on scan results)
+ * @bssid: The AP BSSID or %NULL if not specified (auto-select based on scan
+ *	results)
+ * @ssid: SSID
+ * @ssid_len: Length of ssid in octets
+ * @auth_type: Authentication type (algorithm)
+ * @assoc_ie: IEs for association request
+ * @assoc_ie_len: Length of assoc_ie in octets
+ * @privacy: indicates whether privacy-enabled APs should be used
+ * @crypto: crypto settings
+ */
+struct cfg80211_connect_params {
+	struct ieee80211_channel *channel;
+	u8 *bssid;
+	u8 *ssid;
+	size_t ssid_len;
+	enum nl80211_auth_type auth_type;
+	u8 *ie;
+	size_t ie_len;
+	bool privacy;
+	struct cfg80211_crypto_settings crypto;
+};
+
+/**
  * enum wiphy_params_flags - set_wiphy_params bitfield values
  * WIPHY_PARAM_RETRY_SHORT: wiphy->retry_short has changed
  * WIPHY_PARAM_RETRY_LONG: wiphy->retry_long has changed
@@ -762,6 +793,26 @@ enum tx_power_setting {
 	TX_POWER_AUTOMATIC,
 	TX_POWER_LIMITED,
 	TX_POWER_FIXED,
+};
+
+/*
+ * cfg80211_bitrate_mask - masks for bitrate control
+ */
+struct cfg80211_bitrate_mask {
+/*
+ * As discussed in Berlin, this struct really
+ * should look like this:
+
+	struct {
+		u32 legacy;
+		u8 mcs[IEEE80211_HT_MCS_MASK_LEN];
+	} control[IEEE80211_NUM_BANDS];
+
+ * Since we can always fix in-kernel users, let's keep
+ * it simpler for now:
+ */
+	u32 fixed;   /* fixed bitrate, 0 == not fixed */
+	u32 maxrate; /* in kbps, 0 == no limit */
 };
 
 /**
@@ -841,6 +892,12 @@ enum tx_power_setting {
  * @deauth: Request to deauthenticate from the specified peer
  * @disassoc: Request to disassociate from the specified peer
  *
+ * @connect: Connect to the ESS with the specified parameters. When connected,
+ *	call cfg80211_connect_result() with status code %WLAN_STATUS_SUCCESS.
+ *	If the connection fails for some reason, call cfg80211_connect_result()
+ *	with the status from the AP.
+ * @disconnect: Disconnect from the BSS/ESS.
+ *
  * @join_ibss: Join the specified IBSS (or create if necessary). Once done, call
  *	cfg80211_ibss_joined(), also call that function when changing BSSID due
  *	to a merge.
@@ -857,6 +914,8 @@ enum tx_power_setting {
  *
  * @rfkill_poll: polls the hw rfkill line, use cfg80211 reporting
  *	functions to adjust rfkill hw state
+ *
+ * @testmode_cmd: run a test mode command
  */
 struct cfg80211_ops {
 	int	(*suspend)(struct wiphy *wiphy);
@@ -866,7 +925,8 @@ struct cfg80211_ops {
 				    enum nl80211_iftype type, u32 *flags,
 				    struct vif_params *params);
 	int	(*del_virtual_intf)(struct wiphy *wiphy, int ifindex);
-	int	(*change_virtual_intf)(struct wiphy *wiphy, int ifindex,
+	int	(*change_virtual_intf)(struct wiphy *wiphy,
+				       struct net_device *dev,
 				       enum nl80211_iftype type, u32 *flags,
 				       struct vif_params *params);
 
@@ -939,9 +999,16 @@ struct cfg80211_ops {
 	int	(*assoc)(struct wiphy *wiphy, struct net_device *dev,
 			 struct cfg80211_assoc_request *req);
 	int	(*deauth)(struct wiphy *wiphy, struct net_device *dev,
-			  struct cfg80211_deauth_request *req);
+			  struct cfg80211_deauth_request *req,
+			  void *cookie);
 	int	(*disassoc)(struct wiphy *wiphy, struct net_device *dev,
-			    struct cfg80211_disassoc_request *req);
+			    struct cfg80211_disassoc_request *req,
+			    void *cookie);
+
+	int	(*connect)(struct wiphy *wiphy, struct net_device *dev,
+			   struct cfg80211_connect_params *sme);
+	int	(*disconnect)(struct wiphy *wiphy, struct net_device *dev,
+			      u16 reason_code);
 
 	int	(*join_ibss)(struct wiphy *wiphy, struct net_device *dev,
 			     struct cfg80211_ibss_params *params);
@@ -953,7 +1020,23 @@ struct cfg80211_ops {
 				enum tx_power_setting type, int dbm);
 	int	(*get_tx_power)(struct wiphy *wiphy, int *dbm);
 
+	int	(*set_wds_peer)(struct wiphy *wiphy, struct net_device *dev,
+				u8 *addr);
+
 	void	(*rfkill_poll)(struct wiphy *wiphy);
+
+#ifdef CONFIG_NL80211_TESTMODE
+	int	(*testmode_cmd)(struct wiphy *wiphy, void *data, int len);
+#endif
+
+	int	(*set_bitrate_mask)(struct wiphy *wiphy,
+				    struct net_device *dev,
+				    const u8 *peer,
+				    const struct cfg80211_bitrate_mask *mask);
+
+	/* some temporary stuff to finish wext */
+	int	(*set_power_mgmt)(struct wiphy *wiphy, struct net_device *dev,
+				  bool enabled, int timeout);
 };
 
 /*
@@ -1058,6 +1141,17 @@ static inline void *wiphy_priv(struct wiphy *wiphy)
 }
 
 /**
+ * priv_to_wiphy - return the wiphy containing the priv
+ *
+ * @priv: a pointer previously returned by wiphy_priv
+ */
+static inline struct wiphy *priv_to_wiphy(void *priv)
+{
+	BUG_ON(!priv);
+	return container_of(priv, struct wiphy, priv);
+}
+
+/**
  * set_wiphy_dev - set device pointer for wiphy
  *
  * @wiphy: The wiphy whose device to bind
@@ -1129,6 +1223,12 @@ extern void wiphy_unregister(struct wiphy *wiphy);
  */
 extern void wiphy_free(struct wiphy *wiphy);
 
+/* internal struct */
+struct cfg80211_conn;
+struct cfg80211_internal_bss;
+
+#define MAX_AUTH_BSSES		4
+
 /**
  * struct wireless_dev - wireless per-netdev state
  *
@@ -1152,22 +1252,41 @@ struct wireless_dev {
 	struct wiphy *wiphy;
 	enum nl80211_iftype iftype;
 
-	/* private to the generic wireless code */
+	/* the remainder of this struct should be private to cfg80211 */
 	struct list_head list;
 	struct net_device *netdev;
 
-	/* currently used for IBSS - might be rearranged in the future */
-	struct cfg80211_bss *current_bss;
-	u8 bssid[ETH_ALEN];
+	struct mutex mtx;
+
+	/* currently used for IBSS and SME - might be rearranged later */
 	u8 ssid[IEEE80211_MAX_SSID_LEN];
 	u8 ssid_len;
+	enum {
+		CFG80211_SME_IDLE,
+		CFG80211_SME_CONNECTING,
+		CFG80211_SME_CONNECTED,
+	} sme_state;
+	struct cfg80211_conn *conn;
+
+	struct list_head event_list;
+	spinlock_t event_lock;
+
+	struct cfg80211_internal_bss *authtry_bsses[MAX_AUTH_BSSES];
+	struct cfg80211_internal_bss *auth_bsses[MAX_AUTH_BSSES];
+	struct cfg80211_internal_bss *current_bss; /* associated / joined */
 
 #ifdef CONFIG_WIRELESS_EXT
 	/* wext data */
 	struct {
 		struct cfg80211_ibss_params ibss;
+		struct cfg80211_connect_params connect;
+		u8 *ie;
+		size_t ie_len;
 		u8 bssid[ETH_ALEN];
+		u8 ssid[IEEE80211_MAX_SSID_LEN];
 		s8 default_key, default_mgmt_key;
+		bool ps;
+		int ps_timeout;
 	} wext;
 #endif
 };
@@ -1447,8 +1566,43 @@ int cfg80211_ibss_wext_giwap(struct net_device *dev,
 			     struct iw_request_info *info,
 			     struct sockaddr *ap_addr, char *extra);
 
+int cfg80211_mgd_wext_siwfreq(struct net_device *dev,
+			      struct iw_request_info *info,
+			      struct iw_freq *freq, char *extra);
+int cfg80211_mgd_wext_giwfreq(struct net_device *dev,
+			      struct iw_request_info *info,
+			      struct iw_freq *freq, char *extra);
+int cfg80211_mgd_wext_siwessid(struct net_device *dev,
+			       struct iw_request_info *info,
+			       struct iw_point *data, char *ssid);
+int cfg80211_mgd_wext_giwessid(struct net_device *dev,
+			       struct iw_request_info *info,
+			       struct iw_point *data, char *ssid);
+int cfg80211_mgd_wext_siwap(struct net_device *dev,
+			    struct iw_request_info *info,
+			    struct sockaddr *ap_addr, char *extra);
+int cfg80211_mgd_wext_giwap(struct net_device *dev,
+			    struct iw_request_info *info,
+			    struct sockaddr *ap_addr, char *extra);
+int cfg80211_wext_siwgenie(struct net_device *dev,
+			   struct iw_request_info *info,
+			   struct iw_point *data, char *extra);
+int cfg80211_wext_siwauth(struct net_device *dev,
+			  struct iw_request_info *info,
+			  struct iw_param *data, char *extra);
+int cfg80211_wext_giwauth(struct net_device *dev,
+			  struct iw_request_info *info,
+			  struct iw_param *data, char *extra);
+
 struct ieee80211_channel *cfg80211_wext_freq(struct wiphy *wiphy,
 					     struct iw_freq *freq);
+
+int cfg80211_wext_siwrate(struct net_device *dev,
+			  struct iw_request_info *info,
+			  struct iw_param *rate, char *extra);
+int cfg80211_wext_giwrate(struct net_device *dev,
+			  struct iw_request_info *info,
+			  struct iw_param *rate, char *extra);
 
 int cfg80211_wext_siwrts(struct net_device *dev,
 			 struct iw_request_info *info,
@@ -1483,6 +1637,21 @@ int cfg80211_wext_siwtxpower(struct net_device *dev,
 int cfg80211_wext_giwtxpower(struct net_device *dev,
 			     struct iw_request_info *info,
 			     union iwreq_data *data, char *keybuf);
+struct iw_statistics *cfg80211_wireless_stats(struct net_device *dev);
+
+int cfg80211_wext_siwpower(struct net_device *dev,
+			   struct iw_request_info *info,
+			   struct iw_param *wrq, char *extra);
+int cfg80211_wext_giwpower(struct net_device *dev,
+			   struct iw_request_info *info,
+			   struct iw_param *wrq, char *extra);
+
+int cfg80211_wds_wext_siwap(struct net_device *dev,
+			    struct iw_request_info *info,
+			    struct sockaddr *addr, char *extra);
+int cfg80211_wds_wext_giwap(struct net_device *dev,
+			    struct iw_request_info *info,
+			    struct sockaddr *addr, char *extra);
 
 /*
  * callbacks for asynchronous cfg80211 methods, notification
@@ -1564,7 +1733,7 @@ void cfg80211_unlink_bss(struct wiphy *wiphy, struct cfg80211_bss *bss);
  * This function is called whenever an authentication has been processed in
  * station mode. The driver is required to call either this function or
  * cfg80211_send_auth_timeout() to indicate the result of cfg80211_ops::auth()
- * call.
+ * call. This function may sleep.
  */
 void cfg80211_send_rx_auth(struct net_device *dev, const u8 *buf, size_t len);
 
@@ -1572,6 +1741,8 @@ void cfg80211_send_rx_auth(struct net_device *dev, const u8 *buf, size_t len);
  * cfg80211_send_auth_timeout - notification of timed out authentication
  * @dev: network device
  * @addr: The MAC address of the device with which the authentication timed out
+ *
+ * This function may sleep.
  */
 void cfg80211_send_auth_timeout(struct net_device *dev, const u8 *addr);
 
@@ -1584,7 +1755,7 @@ void cfg80211_send_auth_timeout(struct net_device *dev, const u8 *addr);
  * This function is called whenever a (re)association response has been
  * processed in station mode. The driver is required to call either this
  * function or cfg80211_send_assoc_timeout() to indicate the result of
- * cfg80211_ops::assoc() call.
+ * cfg80211_ops::assoc() call. This function may sleep.
  */
 void cfg80211_send_rx_assoc(struct net_device *dev, const u8 *buf, size_t len);
 
@@ -1592,6 +1763,8 @@ void cfg80211_send_rx_assoc(struct net_device *dev, const u8 *buf, size_t len);
  * cfg80211_send_assoc_timeout - notification of timed out association
  * @dev: network device
  * @addr: The MAC address of the device with which the association timed out
+ *
+ * This function may sleep.
  */
 void cfg80211_send_assoc_timeout(struct net_device *dev, const u8 *addr);
 
@@ -1600,41 +1773,30 @@ void cfg80211_send_assoc_timeout(struct net_device *dev, const u8 *addr);
  * @dev: network device
  * @buf: deauthentication frame (header + body)
  * @len: length of the frame data
+ * @cookie: cookie from ->deauth if called within that callback,
+ *	%NULL otherwise
  *
  * This function is called whenever deauthentication has been processed in
  * station mode. This includes both received deauthentication frames and
- * locally generated ones.
+ * locally generated ones. This function may sleep.
  */
-void cfg80211_send_deauth(struct net_device *dev, const u8 *buf, size_t len);
+void cfg80211_send_deauth(struct net_device *dev, const u8 *buf, size_t len,
+			  void *cookie);
 
 /**
  * cfg80211_send_disassoc - notification of processed disassociation
  * @dev: network device
  * @buf: disassociation response frame (header + body)
  * @len: length of the frame data
+ * @cookie: cookie from ->disassoc if called within that callback,
+ *	%NULL otherwise
  *
  * This function is called whenever disassociation has been processed in
  * station mode. This includes both received disassociation frames and locally
- * generated ones.
+ * generated ones. This function may sleep.
  */
-void cfg80211_send_disassoc(struct net_device *dev, const u8 *buf, size_t len);
-
-/**
- * cfg80211_hold_bss - exclude bss from expiration
- * @bss: bss which should not expire
- *
- * In a case when the BSS is not updated but it shouldn't expire this
- * function can be used to mark the BSS to be excluded from expiration.
- */
-void cfg80211_hold_bss(struct cfg80211_bss *bss);
-
-/**
- * cfg80211_unhold_bss - remove expiration exception from the BSS
- * @bss: bss which can expire again
- *
- * This function marks the BSS to be expirable again.
- */
-void cfg80211_unhold_bss(struct cfg80211_bss *bss);
+void cfg80211_send_disassoc(struct net_device *dev, const u8 *buf, size_t len,
+			    void *cookie);
 
 /**
  * cfg80211_michael_mic_failure - notification of Michael MIC failure (TKIP)
@@ -1643,6 +1805,7 @@ void cfg80211_unhold_bss(struct cfg80211_bss *bss);
  * @key_type: The key type that the received frame used
  * @key_id: Key identifier (0..3)
  * @tsc: The TSC value of the frame that generated the MIC failure (6 octets)
+ * @gfp: allocation flags
  *
  * This function is called whenever the local MAC detects a MIC failure in a
  * received frame. This matches with MLME-MICHAELMICFAILURE.indication()
@@ -1650,7 +1813,7 @@ void cfg80211_unhold_bss(struct cfg80211_bss *bss);
  */
 void cfg80211_michael_mic_failure(struct net_device *dev, const u8 *addr,
 				  enum nl80211_key_type key_type, int key_id,
-				  const u8 *tsc);
+				  const u8 *tsc, gfp_t gfp);
 
 /**
  * cfg80211_ibss_joined - notify cfg80211 that device joined an IBSS
@@ -1686,5 +1849,138 @@ void wiphy_rfkill_start_polling(struct wiphy *wiphy);
  * @wiphy: the wiphy
  */
 void wiphy_rfkill_stop_polling(struct wiphy *wiphy);
+
+#ifdef CONFIG_NL80211_TESTMODE
+/**
+ * cfg80211_testmode_alloc_reply_skb - allocate testmode reply
+ * @wiphy: the wiphy
+ * @approxlen: an upper bound of the length of the data that will
+ *	be put into the skb
+ *
+ * This function allocates and pre-fills an skb for a reply to
+ * the testmode command. Since it is intended for a reply, calling
+ * it outside of the @testmode_cmd operation is invalid.
+ *
+ * The returned skb (or %NULL if any errors happen) is pre-filled
+ * with the wiphy index and set up in a way that any data that is
+ * put into the skb (with skb_put(), nla_put() or similar) will end
+ * up being within the %NL80211_ATTR_TESTDATA attribute, so all that
+ * needs to be done with the skb is adding data for the corresponding
+ * userspace tool which can then read that data out of the testdata
+ * attribute. You must not modify the skb in any other way.
+ *
+ * When done, call cfg80211_testmode_reply() with the skb and return
+ * its error code as the result of the @testmode_cmd operation.
+ */
+struct sk_buff *cfg80211_testmode_alloc_reply_skb(struct wiphy *wiphy,
+						  int approxlen);
+
+/**
+ * cfg80211_testmode_reply - send the reply skb
+ * @skb: The skb, must have been allocated with
+ *	cfg80211_testmode_alloc_reply_skb()
+ *
+ * Returns an error code or 0 on success, since calling this
+ * function will usually be the last thing before returning
+ * from the @testmode_cmd you should return the error code.
+ * Note that this function consumes the skb regardless of the
+ * return value.
+ */
+int cfg80211_testmode_reply(struct sk_buff *skb);
+
+/**
+ * cfg80211_testmode_alloc_event_skb - allocate testmode event
+ * @wiphy: the wiphy
+ * @approxlen: an upper bound of the length of the data that will
+ *	be put into the skb
+ * @gfp: allocation flags
+ *
+ * This function allocates and pre-fills an skb for an event on the
+ * testmode multicast group.
+ *
+ * The returned skb (or %NULL if any errors happen) is set up in the
+ * same way as with cfg80211_testmode_alloc_reply_skb() but prepared
+ * for an event. As there, you should simply add data to it that will
+ * then end up in the %NL80211_ATTR_TESTDATA attribute. Again, you must
+ * not modify the skb in any other way.
+ *
+ * When done filling the skb, call cfg80211_testmode_event() with the
+ * skb to send the event.
+ */
+struct sk_buff *cfg80211_testmode_alloc_event_skb(struct wiphy *wiphy,
+						  int approxlen, gfp_t gfp);
+
+/**
+ * cfg80211_testmode_event - send the event
+ * @skb: The skb, must have been allocated with
+ *	cfg80211_testmode_alloc_event_skb()
+ * @gfp: allocation flags
+ *
+ * This function sends the given @skb, which must have been allocated
+ * by cfg80211_testmode_alloc_event_skb(), as an event. It always
+ * consumes it.
+ */
+void cfg80211_testmode_event(struct sk_buff *skb, gfp_t gfp);
+
+#define CFG80211_TESTMODE_CMD(cmd)	.testmode_cmd = (cmd),
+#else
+#define CFG80211_TESTMODE_CMD(cmd)
+#endif
+
+/**
+ * cfg80211_connect_result - notify cfg80211 of connection result
+ *
+ * @dev: network device
+ * @bssid: the BSSID of the AP
+ * @req_ie: association request IEs (maybe be %NULL)
+ * @req_ie_len: association request IEs length
+ * @resp_ie: association response IEs (may be %NULL)
+ * @resp_ie_len: assoc response IEs length
+ * @status: status code, 0 for successful connection, use
+ *	%WLAN_STATUS_UNSPECIFIED_FAILURE if your device cannot give you
+ *	the real status code for failures.
+ * @gfp: allocation flags
+ *
+ * It should be called by the underlying driver whenever connect() has
+ * succeeded.
+ */
+void cfg80211_connect_result(struct net_device *dev, const u8 *bssid,
+			     const u8 *req_ie, size_t req_ie_len,
+			     const u8 *resp_ie, size_t resp_ie_len,
+			     u16 status, gfp_t gfp);
+
+/**
+ * cfg80211_roamed - notify cfg80211 of roaming
+ *
+ * @dev: network device
+ * @bssid: the BSSID of the new AP
+ * @req_ie: association request IEs (maybe be %NULL)
+ * @req_ie_len: association request IEs length
+ * @resp_ie: association response IEs (may be %NULL)
+ * @resp_ie_len: assoc response IEs length
+ * @gfp: allocation flags
+ *
+ * It should be called by the underlying driver whenever it roamed
+ * from one AP to another while connected.
+ */
+void cfg80211_roamed(struct net_device *dev, const u8 *bssid,
+		     const u8 *req_ie, size_t req_ie_len,
+		     const u8 *resp_ie, size_t resp_ie_len, gfp_t gfp);
+
+/**
+ * cfg80211_disconnected - notify cfg80211 that connection was dropped
+ *
+ * @dev: network device
+ * @ie: information elements of the deauth/disassoc frame (may be %NULL)
+ * @ie_len: length of IEs
+ * @reason: reason code for the disconnection, set it to 0 if unknown
+ * @gfp: allocation flags
+ *
+ * After it calls this function, the driver should enter an idle state
+ * and not try to connect to any AP any more.
+ */
+void cfg80211_disconnected(struct net_device *dev, u16 reason,
+			   u8 *ie, size_t ie_len, gfp_t gfp);
+
 
 #endif /* __NET_CFG80211_H */

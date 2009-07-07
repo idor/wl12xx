@@ -23,6 +23,7 @@
 
 #include <linux/kernel.h>
 #include <linux/netdevice.h>
+#include <linux/etherdevice.h>
 #include <linux/wireless.h>
 #include <linux/ieee80211.h>
 #include <net/cfg80211.h>
@@ -130,6 +131,181 @@ static struct ieee80211_supported_band iwm_band_5ghz = {
 	.n_bitrates = iwm_a_rates_size,
 };
 
+static int iwm_key_init(struct iwm_key *key, u8 key_index,
+			const u8 *mac_addr, struct key_params *params)
+{
+	key->hdr.key_idx = key_index;
+	if (!mac_addr || is_broadcast_ether_addr(mac_addr)) {
+		key->hdr.multicast = 1;
+		memset(key->hdr.mac, 0xff, ETH_ALEN);
+	} else {
+		key->hdr.multicast = 0;
+		memcpy(key->hdr.mac, mac_addr, ETH_ALEN);
+	}
+
+	if (params) {
+		if (params->key_len > WLAN_MAX_KEY_LEN ||
+		    params->seq_len > IW_ENCODE_SEQ_MAX_SIZE)
+			return -EINVAL;
+
+		key->cipher = params->cipher;
+		key->key_len = params->key_len;
+		key->seq_len = params->seq_len;
+		memcpy(key->key, params->key, key->key_len);
+		memcpy(key->seq, params->seq, key->seq_len);
+	}
+
+	return 0;
+}
+
+static int iwm_reset_profile(struct iwm_priv *iwm)
+{
+	int ret;
+
+	if (!iwm->umac_profile_active)
+		return 0;
+
+	/*
+	 * If there is a current active profile, but no
+	 * default key, it's not worth trying to associate again.
+	 */
+	if (iwm->default_key < 0)
+		return 0;
+
+	/*
+	 * Here we have an active profile, but a key setting changed.
+	 * We thus have to invalidate the current profile, and push the
+	 * new one. Keys will be pushed when association takes place.
+	 */
+	ret = iwm_invalidate_mlme_profile(iwm);
+	if (ret < 0) {
+		IWM_ERR(iwm, "Couldn't invalidate profile\n");
+		return ret;
+	}
+
+	return iwm_send_mlme_profile(iwm);
+}
+
+static int iwm_cfg80211_add_key(struct wiphy *wiphy, struct net_device *ndev,
+				u8 key_index, const u8 *mac_addr,
+				struct key_params *params)
+{
+	struct iwm_priv *iwm = ndev_to_iwm(ndev);
+	struct iwm_key *key = &iwm->keys[key_index];
+	int ret;
+
+	IWM_DBG_WEXT(iwm, DBG, "Adding key for %pM\n", mac_addr);
+
+	memset(key, 0, sizeof(struct iwm_key));
+	ret = iwm_key_init(key, key_index, mac_addr, params);
+	if (ret < 0) {
+		IWM_ERR(iwm, "Invalid key_params\n");
+		return ret;
+	}
+
+	/*
+	 * The WEP keys can be set before or after setting the essid.
+	 * We need to handle both cases by simply pushing the keys after
+	 * we send the profile.
+	 * If the profile is not set yet (i.e. we're pushing keys before
+	 * the essid), we set the cipher appropriately.
+	 * If the profile is set, we havent associated yet because our
+	 * cipher was incorrectly set. So we invalidate and send the
+	 * profile again.
+	 */
+	if (key->cipher == WLAN_CIPHER_SUITE_WEP40 ||
+	    key->cipher == WLAN_CIPHER_SUITE_WEP104) {
+		u8 *ucast_cipher = &iwm->umac_profile->sec.ucast_cipher;
+		u8 *mcast_cipher = &iwm->umac_profile->sec.mcast_cipher;
+
+		IWM_DBG_WEXT(iwm, DBG, "WEP key\n");
+
+		if (key->cipher == WLAN_CIPHER_SUITE_WEP40)
+			*ucast_cipher = *mcast_cipher = UMAC_CIPHER_TYPE_WEP_40;
+		if (key->cipher == WLAN_CIPHER_SUITE_WEP104)
+			*ucast_cipher = *mcast_cipher =
+				UMAC_CIPHER_TYPE_WEP_104;
+
+		return iwm_reset_profile(iwm);
+	}
+
+	return iwm_set_key(iwm, 0, key);
+}
+
+static int iwm_cfg80211_get_key(struct wiphy *wiphy, struct net_device *ndev,
+				u8 key_index, const u8 *mac_addr, void *cookie,
+				void (*callback)(void *cookie,
+						 struct key_params*))
+{
+	struct iwm_priv *iwm = ndev_to_iwm(ndev);
+	struct iwm_key *key = &iwm->keys[key_index];
+	struct key_params params;
+
+	IWM_DBG_WEXT(iwm, DBG, "Getting key %d\n", key_index);
+
+	memset(&params, 0, sizeof(params));
+
+	params.cipher = key->cipher;
+	params.key_len = key->key_len;
+	params.seq_len = key->seq_len;
+	params.seq = key->seq;
+	params.key = key->key;
+
+	callback(cookie, &params);
+
+	return key->key_len ? 0 : -ENOENT;
+}
+
+
+static int iwm_cfg80211_del_key(struct wiphy *wiphy, struct net_device *ndev,
+				u8 key_index, const u8 *mac_addr)
+{
+	struct iwm_priv *iwm = ndev_to_iwm(ndev);
+	struct iwm_key *key = &iwm->keys[key_index];
+
+	if (!iwm->keys[key_index].key_len) {
+		IWM_DBG_WEXT(iwm, DBG, "Key %d not used\n", key_index);
+		return 0;
+	}
+
+	if (key_index == iwm->default_key)
+		iwm->default_key = -1;
+
+	/* If the interface is down, we just cache this */
+	if (!test_bit(IWM_STATUS_READY, &iwm->status))
+		return 0;
+
+	return iwm_set_key(iwm, 1, key);
+}
+
+static int iwm_cfg80211_set_default_key(struct wiphy *wiphy,
+					struct net_device *ndev,
+					u8 key_index)
+{
+	struct iwm_priv *iwm = ndev_to_iwm(ndev);
+	int ret;
+
+	IWM_DBG_WEXT(iwm, DBG, "Default key index is: %d\n", key_index);
+
+	if (!iwm->keys[key_index].key_len) {
+		IWM_ERR(iwm, "Key %d not used\n", key_index);
+		return -EINVAL;
+	}
+
+	iwm->default_key = key_index;
+
+	/* If the interface is down, we just cache this */
+	if (!test_bit(IWM_STATUS_READY, &iwm->status))
+		return 0;
+
+	ret = iwm_set_tx_key(iwm, key_index);
+	if (ret < 0)
+		return ret;
+
+	return iwm_reset_profile(iwm);
+}
+
+
 int iwm_cfg80211_inform_bss(struct iwm_priv *iwm)
 {
 	struct wiphy *wiphy = iwm_to_wiphy(iwm);
@@ -167,19 +343,14 @@ int iwm_cfg80211_inform_bss(struct iwm_priv *iwm)
 	return 0;
 }
 
-static int iwm_cfg80211_change_iface(struct wiphy *wiphy, int ifindex,
+static int iwm_cfg80211_change_iface(struct wiphy *wiphy,
+				     struct net_device *ndev,
 				     enum nl80211_iftype type, u32 *flags,
 				     struct vif_params *params)
 {
-	struct net_device *ndev;
 	struct wireless_dev *wdev;
 	struct iwm_priv *iwm;
 	u32 old_mode;
-
-	/* we're under RTNL */
-	ndev = __dev_get_by_index(&init_net, ifindex);
-	if (!ndev)
-		return -ENODEV;
 
 	wdev = ndev->ieee80211_ptr;
 	iwm = ndev_to_iwm(ndev);
@@ -329,12 +500,62 @@ static int iwm_cfg80211_leave_ibss(struct wiphy *wiphy, struct net_device *dev)
 	return 0;
 }
 
+static int iwm_cfg80211_set_txpower(struct wiphy *wiphy,
+				    enum tx_power_setting type, int dbm)
+{
+	switch (type) {
+	case TX_POWER_AUTOMATIC:
+		return 0;
+	default:
+		return -EOPNOTSUPP;
+	}
+
+	return 0;
+}
+
+static int iwm_cfg80211_get_txpower(struct wiphy *wiphy, int *dbm)
+{
+	struct iwm_priv *iwm = wiphy_to_iwm(wiphy);
+
+	*dbm = iwm->txpower;
+
+	return 0;
+}
+
+static int iwm_cfg80211_set_power_mgmt(struct wiphy *wiphy,
+				       struct net_device *dev,
+				       bool enabled, int timeout)
+{
+	struct iwm_priv *iwm = wiphy_to_iwm(wiphy);
+	u32 power_index;
+
+	if (enabled)
+		power_index = IWM_POWER_INDEX_DEFAULT;
+	else
+		power_index = IWM_POWER_INDEX_MIN;
+
+	if (power_index == iwm->conf.power_index)
+		return 0;
+
+	iwm->conf.power_index = power_index;
+
+	return iwm_umac_set_config_fix(iwm, UMAC_PARAM_TBL_CFG_FIX,
+				       CFG_POWER_INDEX, iwm->conf.power_index);
+}
+
 static struct cfg80211_ops iwm_cfg80211_ops = {
 	.change_virtual_intf = iwm_cfg80211_change_iface,
+	.add_key = iwm_cfg80211_add_key,
+	.get_key = iwm_cfg80211_get_key,
+	.del_key = iwm_cfg80211_del_key,
+	.set_default_key = iwm_cfg80211_set_default_key,
 	.scan = iwm_cfg80211_scan,
 	.set_wiphy_params = iwm_cfg80211_set_wiphy_params,
 	.join_ibss = iwm_cfg80211_join_ibss,
 	.leave_ibss = iwm_cfg80211_leave_ibss,
+	.set_tx_power = iwm_cfg80211_set_txpower,
+	.get_tx_power = iwm_cfg80211_get_txpower,
+	.set_power_mgmt = iwm_cfg80211_set_power_mgmt,
 };
 
 struct wireless_dev *iwm_wdev_alloc(int sizeof_bus, struct device *dev)

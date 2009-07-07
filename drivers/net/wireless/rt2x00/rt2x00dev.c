@@ -449,7 +449,8 @@ void rt2x00lib_rxdone(struct rt2x00_dev *rt2x00dev,
 	 * mac80211 will clean up the skb structure.
 	 */
 	rt2x00debug_dump_frame(rt2x00dev, DUMP_FRAME_RXDONE, entry->skb);
-	ieee80211_rx_irqsafe(rt2x00dev->hw, entry->skb, rx_status);
+	memcpy(IEEE80211_SKB_RXCB(entry->skb), rx_status, sizeof(*rx_status));
+	ieee80211_rx_irqsafe(rt2x00dev->hw, entry->skb);
 
 	/*
 	 * Replace the skb with the freshly allocated one.
@@ -870,7 +871,6 @@ int rt2x00lib_probe_dev(struct rt2x00_dev *rt2x00dev)
 	 */
 	rt2x00link_register(rt2x00dev);
 	rt2x00leds_register(rt2x00dev);
-	rt2x00rfkill_allocate(rt2x00dev);
 	rt2x00debug_register(rt2x00dev);
 
 	set_bit(DEVICE_STATE_PRESENT, &rt2x00dev->flags);
@@ -902,7 +902,6 @@ void rt2x00lib_remove_dev(struct rt2x00_dev *rt2x00dev)
 	 * Free extra components
 	 */
 	rt2x00debug_deregister(rt2x00dev);
-	rt2x00rfkill_free(rt2x00dev);
 	rt2x00leds_unregister(rt2x00dev);
 
 	/*

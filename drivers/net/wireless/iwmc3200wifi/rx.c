@@ -143,17 +143,18 @@ static int iwm_ntf_init_complete(struct iwm_priv *iwm, u8 *buf,
 				 unsigned long buf_size,
 				 struct iwm_wifi_cmd *cmd)
 {
+	struct wiphy *wiphy = iwm_to_wiphy(iwm);
 	struct iwm_umac_notif_init_complete *init_complete =
 			(struct iwm_umac_notif_init_complete *)(buf);
 	u16 status = le16_to_cpu(init_complete->status);
+	bool blocked = (status == UMAC_NTFY_INIT_COMPLETE_STATUS_ERR);
 
-	if (status == UMAC_NTFY_INIT_COMPLETE_STATUS_ERR) {
+	if (blocked)
 		IWM_DBG_NTF(iwm, DBG, "Hardware rf kill is on (radio off)\n");
-		set_bit(IWM_RADIO_RFKILL_HW, &iwm->radio);
-	} else {
+	else
 		IWM_DBG_NTF(iwm, DBG, "Hardware rf kill is off (radio on)\n");
-		clear_bit(IWM_RADIO_RFKILL_HW, &iwm->radio);
-	}
+
+	wiphy_rfkill_set_hw_state(wiphy, blocked);
 
 	return 0;
 }
@@ -875,6 +876,7 @@ static int iwm_ntf_statistics(struct iwm_priv *iwm, u8 *buf,
 		/* UMAC passes rate info multiplies by 2 */
 		iwm->rate = max_rate >> 1;
 	}
+	iwm->txpower = le32_to_cpu(stats->tx_power);
 
 	wstats->status = 0;
 
@@ -921,13 +923,6 @@ static int iwm_ntf_eeprom_proxy(struct iwm_priv *iwm, u8 *buf,
 
 	if ((hdr_offset + hdr_len) > IWM_EEPROM_LEN)
 		return -EINVAL;
-
-#ifdef CONFIG_IWM_B0_HW_SUPPORT
-	if (hdr_offset == IWM_EEPROM_SKU_CAP_OFF) {
-		if (eeprom_proxy->buf[0] == 0xff)
-			iwm->conf.hw_b0 = 1;
-	}
-#endif
 
 	switch (hdr_type) {
 	case IWM_UMAC_CMD_EEPROM_TYPE_READ:
@@ -993,12 +988,17 @@ static int iwm_ntf_wifi_if_wrapper(struct iwm_priv *iwm, u8 *buf,
 			(struct iwm_umac_wifi_if *)cmd->buf.payload;
 
 	IWM_DBG_NTF(iwm, DBG, "WIFI_IF_WRAPPER cmd is delivered to UMAC: "
-		    "oid is %d\n", hdr->oid);
+		    "oid is 0x%x\n", hdr->oid);
+
+	if (hdr->oid <= WIFI_IF_NTFY_MAX) {
+		set_bit(hdr->oid, &iwm->wifi_ntfy[0]);
+		wake_up_interruptible(&iwm->wifi_ntfy_queue);
+	} else
+		return -EINVAL;
 
 	switch (hdr->oid) {
 	case UMAC_WIFI_IF_CMD_SET_PROFILE:
 		iwm->umac_profile_active = 1;
-		wake_up_interruptible(&iwm->mlme_queue);
 		break;
 	default:
 		break;
@@ -1010,6 +1010,7 @@ static int iwm_ntf_wifi_if_wrapper(struct iwm_priv *iwm, u8 *buf,
 static int iwm_ntf_card_state(struct iwm_priv *iwm, u8 *buf,
 			      unsigned long buf_size, struct iwm_wifi_cmd *cmd)
 {
+	struct wiphy *wiphy = iwm_to_wiphy(iwm);
 	struct iwm_lmac_card_state *state = (struct iwm_lmac_card_state *)
 				(buf + sizeof(struct iwm_umac_wifi_in_hdr));
 	u32 flags = le32_to_cpu(state->flags);
@@ -1018,10 +1019,7 @@ static int iwm_ntf_card_state(struct iwm_priv *iwm, u8 *buf,
 		 flags & IWM_CARD_STATE_HW_DISABLED ? "ON" : "OFF",
 		 flags & IWM_CARD_STATE_CTKILL_DISABLED ? "ON" : "OFF");
 
-	if (flags & IWM_CARD_STATE_HW_DISABLED)
-		set_bit(IWM_RADIO_RFKILL_HW, &iwm->radio);
-	else
-		clear_bit(IWM_RADIO_RFKILL_HW, &iwm->radio);
+	wiphy_rfkill_set_hw_state(wiphy, flags & IWM_CARD_STATE_HW_DISABLED);
 
 	return 0;
 }
@@ -1368,7 +1366,7 @@ static void iwm_rx_process_packet(struct iwm_priv *iwm,
 		ndev->stats.rx_packets++;
 		ndev->stats.rx_bytes += skb->len;
 
-		if (netif_rx(skb) == NET_RX_DROP) {
+		if (netif_rx_ni(skb) == NET_RX_DROP) {
 			IWM_ERR(iwm, "Packet dropped\n");
 			ndev->stats.rx_dropped++;
 		}

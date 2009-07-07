@@ -73,18 +73,6 @@ static void ath_tx_rc_status(struct ath_buf *bf, struct ath_desc *ds,
 /* Aggregation logic */
 /*********************/
 
-static int ath_aggr_query(struct ath_softc *sc, struct ath_node *an, u8 tidno)
-{
-	struct ath_atx_tid *tid;
-	tid = ATH_AN_2_TID(an, tidno);
-
-	if (tid->state & AGGR_ADDBA_COMPLETE ||
-	    tid->state & AGGR_ADDBA_PROGRESS)
-		return 1;
-	else
-		return 0;
-}
-
 static void ath_tx_queue_tid(struct ath_txq *txq, struct ath_atx_tid *tid)
 {
 	struct ath_atx_ac *ac = tid->ac;
@@ -250,6 +238,10 @@ static struct ath_buf* ath_clone_txbuf(struct ath_softc *sc, struct ath_buf *bf)
 	struct ath_buf *tbf;
 
 	spin_lock_bh(&sc->tx.txbuflock);
+	if (WARN_ON(list_empty(&sc->tx.txbuf))) {
+		spin_unlock_bh(&sc->tx.txbuflock);
+		return NULL;
+	}
 	ASSERT(!list_empty((&sc->tx.txbuf)));
 	tbf = list_first_entry(&sc->tx.txbuf, struct ath_buf, list);
 	list_del(&tbf->list);
@@ -384,6 +376,8 @@ static void ath_tx_complete_aggr(struct ath_softc *sc, struct ath_txq *txq,
 				struct ath_buf *tbf;
 
 				tbf = ath_clone_txbuf(sc, bf_last);
+				if (!tbf)
+					break;
 				ath9k_hw_cleartxdesc(sc->sc_ah, tbf->bf_desc);
 				list_add_tail(&tbf->list, &bf_head);
 			} else {
@@ -407,7 +401,6 @@ static void ath_tx_complete_aggr(struct ath_softc *sc, struct ath_txq *txq,
 	if (tid->state & AGGR_CLEANUP) {
 		if (tid->baw_head == tid->baw_tail) {
 			tid->state &= ~AGGR_ADDBA_COMPLETE;
-			tid->addba_exchangeattempts = 0;
 			tid->state &= ~AGGR_CLEANUP;
 
 			/* send buffered frames as singles */
@@ -712,7 +705,6 @@ int ath_tx_aggr_stop(struct ath_softc *sc, struct ieee80211_sta *sta, u16 tid)
 
 	if (!(txtid->state & AGGR_ADDBA_COMPLETE)) {
 		txtid->state &= ~AGGR_ADDBA_PROGRESS;
-		txtid->addba_exchangeattempts = 0;
 		return 0;
 	}
 
@@ -740,7 +732,6 @@ int ath_tx_aggr_stop(struct ath_softc *sc, struct ieee80211_sta *sta, u16 tid)
 		txtid->state |= AGGR_CLEANUP;
 	} else {
 		txtid->state &= ~AGGR_ADDBA_COMPLETE;
-		txtid->addba_exchangeattempts = 0;
 		ath_tx_flush_tid(sc, txtid);
 	}
 
@@ -773,14 +764,8 @@ bool ath_tx_aggr_check(struct ath_softc *sc, struct ath_node *an, u8 tidno)
 
 	txtid = ATH_AN_2_TID(an, tidno);
 
-	if (!(txtid->state & AGGR_ADDBA_COMPLETE)) {
-		if (!(txtid->state & AGGR_ADDBA_PROGRESS) &&
-		    (txtid->addba_exchangeattempts < ADDBA_EXCHANGE_ATTEMPTS)) {
-			txtid->addba_exchangeattempts++;
+	if (!(txtid->state & (AGGR_ADDBA_COMPLETE | AGGR_ADDBA_PROGRESS)))
 			return true;
-		}
-	}
-
 	return false;
 }
 
@@ -1629,7 +1614,7 @@ static void ath_tx_start_dma(struct ath_softc *sc, struct ath_buf *bf,
 			goto tx_done;
 		}
 
-		if (ath_aggr_query(sc, an, bf->bf_tidno)) {
+		if (tx_info->flags & IEEE80211_TX_CTL_AMPDU) {
 			/*
 			 * Try aggregation if it's a unicast data frame
 			 * and the destination is HT capable.
@@ -2115,7 +2100,6 @@ void ath_tx_node_init(struct ath_softc *sc, struct ath_node *an)
 		tid->ac = &an->ac[acno];
 		tid->state &= ~AGGR_ADDBA_COMPLETE;
 		tid->state &= ~AGGR_ADDBA_PROGRESS;
-		tid->addba_exchangeattempts = 0;
 	}
 
 	for (acno = 0, ac = &an->ac[acno];
@@ -2172,7 +2156,6 @@ void ath_tx_node_cleanup(struct ath_softc *sc, struct ath_node *an)
 					tid->sched = false;
 					ath_tid_drain(sc, txq, tid);
 					tid->state &= ~AGGR_ADDBA_COMPLETE;
-					tid->addba_exchangeattempts = 0;
 					tid->state &= ~AGGR_CLEANUP;
 				}
 			}

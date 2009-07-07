@@ -143,7 +143,8 @@ static void rtl8180_handle_rx(struct ieee80211_hw *dev)
 			if (flags & RTL818X_RX_DESC_FLAG_CRC32_ERR)
 				rx_status.flag |= RX_FLAG_FAILED_FCS_CRC;
 
-			ieee80211_rx_irqsafe(dev, skb, &rx_status);
+			memcpy(IEEE80211_SKB_RXCB(skb), &rx_status, sizeof(rx_status));
+			ieee80211_rx_irqsafe(dev, skb);
 
 			skb = new_skb;
 			priv->rx_buf[priv->rx_idx] = skb;
@@ -280,7 +281,7 @@ static int rtl8180_tx(struct ieee80211_hw *dev, struct sk_buff *skb)
 				(ieee80211_get_tx_rate(dev, info)->bitrate * 2) / 10);
 		remainder = (16 * (skb->len + 4)) %
 			    ((ieee80211_get_tx_rate(dev, info)->bitrate * 2) / 10);
-		if (remainder > 0 && remainder <= 6)
+		if (remainder <= 6)
 			plcp_len |= 1 << 15;
 	}
 

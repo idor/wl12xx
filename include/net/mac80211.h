@@ -397,6 +397,11 @@ static inline struct ieee80211_tx_info *IEEE80211_SKB_CB(struct sk_buff *skb)
 	return (struct ieee80211_tx_info *)skb->cb;
 }
 
+static inline struct ieee80211_rx_status *IEEE80211_SKB_RXCB(struct sk_buff *skb)
+{
+	return (struct ieee80211_rx_status *)skb->cb;
+}
+
 /**
  * ieee80211_tx_info_clear_status - clear TX status
  *
@@ -478,7 +483,7 @@ enum mac80211_rx_flags {
  *
  * The low-level driver should provide this information (the subset
  * supported by hardware) to the 802.11 code with each received
- * frame.
+ * frame, in the skb's control buffer (cb).
  *
  * @mactime: value in microseconds of the 64-bit Time Synchronization Function
  * 	(TSF) timer when the first data symbol (MPDU) arrived at the hardware.
@@ -1411,6 +1416,8 @@ enum ieee80211_ampdu_mlme_action {
  * @rfkill_poll: Poll rfkill hardware state. If you need this, you also
  *	need to set wiphy->rfkill_poll to %true before registration,
  *	and need to call wiphy_rfkill_set_hw_state() in the callback.
+ *
+ * @testmode_cmd: Implement a cfg80211 test mode command.
  */
 struct ieee80211_ops {
 	int (*tx)(struct ieee80211_hw *hw, struct sk_buff *skb);
@@ -1461,6 +1468,9 @@ struct ieee80211_ops {
 			    struct ieee80211_sta *sta, u16 tid, u16 *ssn);
 
 	void (*rfkill_poll)(struct ieee80211_hw *hw);
+#ifdef CONFIG_NL80211_TESTMODE
+	int (*testmode_cmd)(struct ieee80211_hw *hw, void *data, int len);
+#endif
 };
 
 /**
@@ -1606,9 +1616,11 @@ void ieee80211_free_hw(struct ieee80211_hw *hw);
  */
 void ieee80211_restart_hw(struct ieee80211_hw *hw);
 
-/* trick to avoid symbol clashes with the ieee80211 subsystem */
-void __ieee80211_rx(struct ieee80211_hw *hw, struct sk_buff *skb,
-		    struct ieee80211_rx_status *status);
+/*
+ * trick to avoid symbol clashes with the ieee80211 subsystem,
+ * use the inline below instead
+ */
+void __ieee80211_rx(struct ieee80211_hw *hw, struct sk_buff *skb);
 
 /**
  * ieee80211_rx - receive frame
@@ -1624,13 +1636,10 @@ void __ieee80211_rx(struct ieee80211_hw *hw, struct sk_buff *skb,
  *
  * @hw: the hardware this frame came in on
  * @skb: the buffer to receive, owned by mac80211 after this call
- * @status: status of this frame; the status pointer need not be valid
- *	after this function returns
  */
-static inline void ieee80211_rx(struct ieee80211_hw *hw, struct sk_buff *skb,
-				struct ieee80211_rx_status *status)
+static inline void ieee80211_rx(struct ieee80211_hw *hw, struct sk_buff *skb)
 {
-	__ieee80211_rx(hw, skb, status);
+	__ieee80211_rx(hw, skb);
 }
 
 /**
@@ -1644,13 +1653,8 @@ static inline void ieee80211_rx(struct ieee80211_hw *hw, struct sk_buff *skb,
  *
  * @hw: the hardware this frame came in on
  * @skb: the buffer to receive, owned by mac80211 after this call
- * @status: status of this frame; the status pointer need not be valid
- *	after this function returns and is not freed by mac80211,
- *	it is recommended that it points to a stack area
  */
-void ieee80211_rx_irqsafe(struct ieee80211_hw *hw,
-			  struct sk_buff *skb,
-			  struct ieee80211_rx_status *status);
+void ieee80211_rx_irqsafe(struct ieee80211_hw *hw, struct sk_buff *skb);
 
 /**
  * ieee80211_tx_status - transmit status callback

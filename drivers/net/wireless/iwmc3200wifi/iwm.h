@@ -52,8 +52,6 @@
 #define IWM_COPYRIGHT "Copyright(c) 2009 Intel Corporation"
 #define IWM_AUTHOR "<ilw@linux.intel.com>"
 
-#define CONFIG_IWM_B0_HW_SUPPORT	1
-
 #define IWM_SRC_LMAC	UMAC_HDI_IN_SOURCE_FHRX
 #define IWM_SRC_UDMA	UMAC_HDI_IN_SOURCE_UDMA
 #define IWM_SRC_UMAC	UMAC_HDI_IN_SOURCE_FW
@@ -65,8 +63,7 @@
 
 struct iwm_conf {
 	u32 sdio_ior_timeout;
-	unsigned long init_calib_map;
-	unsigned long periodic_calib_map;
+	unsigned long calib_map;
 	bool reset_on_fatal_err;
 	bool auto_connect;
 	bool wimax_not_present;
@@ -87,9 +84,6 @@ struct iwm_conf {
 	u8 ibss_channel;
 
 	u8 mac_addr[ETH_ALEN];
-#ifdef CONFIG_IWM_B0_HW_SUPPORT
-	bool hw_b0;
-#endif
 };
 
 enum {
@@ -162,13 +156,11 @@ struct iwm_umac_key_hdr {
 
 struct iwm_key {
 	struct iwm_umac_key_hdr hdr;
-	u8 in_use;
-	u8 alg;
-	u32 flags;
-	u8 tx_seq[IW_ENCODE_SEQ_MAX_SIZE];
-	u8 rx_seq[IW_ENCODE_SEQ_MAX_SIZE];
-	u8 key_len;
-	u8 key[32];
+	u32 cipher;
+	u8 key[WLAN_MAX_KEY_LEN];
+	u8 seq[IW_ENCODE_SEQ_MAX_SIZE];
+	int key_len;
+	int seq_len;
 };
 
 #define IWM_RX_ID_HASH  0xff
@@ -185,10 +177,6 @@ struct iwm_key {
 #define IWM_STATUS_SCAN_ABORTING	2
 #define IWM_STATUS_ASSOCIATING		3
 #define IWM_STATUS_ASSOCIATED		4
-
-#define IWM_RADIO_RFKILL_OFF		0
-#define IWM_RADIO_RFKILL_HW		1
-#define IWM_RADIO_RFKILL_SW		2
 
 struct iwm_tx_queue {
 	int id;
@@ -223,7 +211,6 @@ struct iwm_priv {
 	struct iwm_conf conf;
 
 	unsigned long status;
-	unsigned long radio;
 
 	struct list_head pending_notif;
 	wait_queue_head_t notif_queue;
@@ -242,6 +229,7 @@ struct iwm_priv {
 	u8 bssid[ETH_ALEN];
 	u8 channel;
 	u16 rate;
+	u32 txpower;
 
 	struct iwm_sta_info sta_table[IWM_STA_TABLE_NUM];
 	struct list_head bss_list;
@@ -276,7 +264,10 @@ struct iwm_priv {
 	struct iwm_tx_queue txq[IWM_TX_QUEUES];
 
 	struct iwm_key keys[IWM_NUM_KEYS];
-	struct iwm_key *default_key;
+	s8 default_key;
+
+	DECLARE_BITMAP(wifi_ntfy, WIFI_IF_NTFY_MAX);
+	wait_queue_head_t wifi_ntfy_queue;
 
 	wait_queue_head_t mlme_queue;
 
@@ -289,7 +280,6 @@ struct iwm_priv {
 	struct timer_list watchdog;
 	struct work_struct reset_worker;
 	struct mutex mutex;
-	struct rfkill *rfkill;
 
 	char private[0] __attribute__((__aligned__(NETDEV_ALIGN)));
 };
