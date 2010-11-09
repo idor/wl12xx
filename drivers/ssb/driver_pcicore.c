@@ -271,6 +271,7 @@ int ssb_pcicore_plat_dev_init(struct pci_dev *d)
 static void ssb_pcicore_fixup_pcibridge(struct pci_dev *dev)
 {
 	u8 lat;
+	u32 val;
 
 	if (dev->bus->ops != &ssb_pcicore_pciops) {
 		/* This is not a device on the PCI-core bridge. */
@@ -287,6 +288,12 @@ static void ssb_pcicore_fixup_pcibridge(struct pci_dev *dev)
 		ssb_printk(KERN_ERR "PCI: SSB bridge enable failed\n");
 		return;
 	}
+
+	/* Disable the RETRY_TIMEOUT register (0x41) to keep
+	 * PCI Tx retries from interfering with C3 CPU state */
+	pci_read_config_dword(pci_dev, 0x40, &val);
+	if ((val & 0x0000ff00) != 0)
+		pci_write_config_dword(pci_dev, 0x40, val & 0xffff00ff);
 
 	/* Enable PCI bridge BAR1 prefetch and burst */
 	pci_write_config_dword(dev, SSB_BAR1_CONTROL, 3);
