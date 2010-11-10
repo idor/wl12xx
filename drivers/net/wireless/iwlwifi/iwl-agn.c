@@ -2815,7 +2815,8 @@ static void __iwl_down(struct iwl_priv *priv)
 				STATUS_EXIT_PENDING;
 
 	/* device going down, Stop using ICT table */
-	iwl_disable_ict(priv);
+	if (priv->cfg->ops->lib->isr_ops.disable)
+		priv->cfg->ops->lib->isr_ops.disable(priv);
 
 	iwlagn_txq_ctx_stop(priv);
 	iwlagn_rxq_stop(priv);
@@ -3038,7 +3039,8 @@ static void iwl_bg_alive_start(struct work_struct *data)
 		return;
 
 	/* enable dram interrupt */
-	iwl_reset_ict(priv);
+	if (priv->cfg->ops->lib->isr_ops.reset)
+		priv->cfg->ops->lib->isr_ops.reset(priv);
 
 	mutex_lock(&priv->mutex);
 	iwl_alive_start(priv);
@@ -3474,36 +3476,6 @@ int iwlagn_mac_ampdu_action(struct ieee80211_hw *hw,
 	return ret;
 }
 
-static void iwlagn_mac_sta_notify(struct ieee80211_hw *hw,
-				  struct ieee80211_vif *vif,
-				  enum sta_notify_cmd cmd,
-				  struct ieee80211_sta *sta)
-{
-	struct iwl_priv *priv = hw->priv;
-	struct iwl_station_priv *sta_priv = (void *)sta->drv_priv;
-	int sta_id;
-
-	switch (cmd) {
-	case STA_NOTIFY_SLEEP:
-		WARN_ON(!sta_priv->client);
-		sta_priv->asleep = true;
-		if (atomic_read(&sta_priv->pending_frames) > 0)
-			ieee80211_sta_block_awake(hw, sta, true);
-		break;
-	case STA_NOTIFY_AWAKE:
-		WARN_ON(!sta_priv->client);
-		if (!sta_priv->asleep)
-			break;
-		sta_priv->asleep = false;
-		sta_id = iwl_sta_id(sta);
-		if (sta_id != IWL_INVALID_STATION)
-			iwl_sta_modify_ps_wake(priv, sta_id);
-		break;
-	default:
-		break;
-	}
-}
-
 int iwlagn_mac_sta_add(struct ieee80211_hw *hw,
 		       struct ieee80211_vif *vif,
 		       struct ieee80211_sta *sta)
@@ -3903,6 +3875,7 @@ static void iwl_uninit_drv(struct iwl_priv *priv)
 	kfree(priv->scan_cmd);
 }
 
+#ifdef CONFIG_IWL5000
 struct ieee80211_ops iwlagn_hw_ops = {
 	.tx = iwlagn_mac_tx,
 	.start = iwlagn_mac_start,
@@ -3925,6 +3898,7 @@ struct ieee80211_ops iwlagn_hw_ops = {
 	.flush = iwlagn_mac_flush,
 	.tx_last_beacon = iwl_mac_tx_last_beacon,
 };
+#endif
 
 static void iwl_hw_detect(struct iwl_priv *priv)
 {
@@ -3992,7 +3966,9 @@ static int iwl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (cfg->mod_params->disable_hw_scan) {
 		dev_printk(KERN_DEBUG, &(pdev->dev),
 			"sw scan support is deprecated\n");
+#ifdef CONFIG_IWL5000
 		iwlagn_hw_ops.hw_scan = NULL;
+#endif
 #ifdef CONFIG_IWL4965
 		iwl4965_hw_ops.hw_scan = NULL;
 #endif
@@ -4198,8 +4174,10 @@ static int iwl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	pci_enable_msi(priv->pci_dev);
 
-	iwl_alloc_isr_ict(priv);
-	err = request_irq(priv->pci_dev->irq, priv->cfg->ops->lib->isr,
+	if (priv->cfg->ops->lib->isr_ops.alloc)
+		priv->cfg->ops->lib->isr_ops.alloc(priv);
+
+	err = request_irq(priv->pci_dev->irq, priv->cfg->ops->lib->isr_ops.isr,
 			  IRQF_SHARED, DRV_NAME, priv);
 	if (err) {
 		IWL_ERR(priv, "Error allocating IRQ %d\n", priv->pci_dev->irq);
@@ -4246,7 +4224,8 @@ static int iwl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	destroy_workqueue(priv->workqueue);
 	priv->workqueue = NULL;
 	free_irq(priv->pci_dev->irq, priv);
-	iwl_free_isr_ict(priv);
+	if (priv->cfg->ops->lib->isr_ops.free)
+		priv->cfg->ops->lib->isr_ops.free(priv);
  out_disable_msi:
 	pci_disable_msi(priv->pci_dev);
 	iwl_uninit_drv(priv);
@@ -4341,7 +4320,8 @@ static void __devexit iwl_pci_remove(struct pci_dev *pdev)
 
 	iwl_uninit_drv(priv);
 
-	iwl_free_isr_ict(priv);
+	if (priv->cfg->ops->lib->isr_ops.free)
+		priv->cfg->ops->lib->isr_ops.free(priv);
 
 	dev_kfree_skb(priv->beacon_skb);
 
@@ -4433,13 +4413,6 @@ static DEFINE_PCI_DEVICE_TABLE(iwl_hw_card_ids) = {
 	{IWL_PCI_DEVICE(0x4239, 0x1316, iwl6000i_2abg_cfg)},
 
 /* 6x00 Series Gen2a */
-	{IWL_PCI_DEVICE(0x0082, 0x1201, iwl6000g2a_2agn_cfg)},
-	{IWL_PCI_DEVICE(0x0085, 0x1211, iwl6000g2a_2agn_cfg)},
-	{IWL_PCI_DEVICE(0x0082, 0x1221, iwl6000g2a_2agn_cfg)},
-	{IWL_PCI_DEVICE(0x0082, 0x1206, iwl6000g2a_2abg_cfg)},
-	{IWL_PCI_DEVICE(0x0085, 0x1216, iwl6000g2a_2abg_cfg)},
-	{IWL_PCI_DEVICE(0x0082, 0x1226, iwl6000g2a_2abg_cfg)},
-	{IWL_PCI_DEVICE(0x0082, 0x1207, iwl6000g2a_2bg_cfg)},
 	{IWL_PCI_DEVICE(0x0082, 0x1301, iwl6000g2a_2agn_cfg)},
 	{IWL_PCI_DEVICE(0x0082, 0x1306, iwl6000g2a_2abg_cfg)},
 	{IWL_PCI_DEVICE(0x0082, 0x1307, iwl6000g2a_2bg_cfg)},
@@ -4449,24 +4422,12 @@ static DEFINE_PCI_DEVICE_TABLE(iwl_hw_card_ids) = {
 	{IWL_PCI_DEVICE(0x0085, 0x1316, iwl6000g2a_2abg_cfg)},
 
 /* 6x00 Series Gen2b */
-	{IWL_PCI_DEVICE(0x008F, 0x5105, iwl6000g2b_bgn_cfg)},
-	{IWL_PCI_DEVICE(0x0090, 0x5115, iwl6000g2b_bgn_cfg)},
-	{IWL_PCI_DEVICE(0x008F, 0x5125, iwl6000g2b_bgn_cfg)},
-	{IWL_PCI_DEVICE(0x008F, 0x5107, iwl6000g2b_bg_cfg)},
-	{IWL_PCI_DEVICE(0x008F, 0x5201, iwl6000g2b_2agn_cfg)},
-	{IWL_PCI_DEVICE(0x0090, 0x5211, iwl6000g2b_2agn_cfg)},
-	{IWL_PCI_DEVICE(0x008F, 0x5221, iwl6000g2b_2agn_cfg)},
-	{IWL_PCI_DEVICE(0x008F, 0x5206, iwl6000g2b_2abg_cfg)},
-	{IWL_PCI_DEVICE(0x0090, 0x5216, iwl6000g2b_2abg_cfg)},
-	{IWL_PCI_DEVICE(0x008F, 0x5226, iwl6000g2b_2abg_cfg)},
-	{IWL_PCI_DEVICE(0x008F, 0x5207, iwl6000g2b_2bg_cfg)},
-	{IWL_PCI_DEVICE(0x008A, 0x5301, iwl6000g2b_bgn_cfg)},
 	{IWL_PCI_DEVICE(0x008A, 0x5305, iwl6000g2b_bgn_cfg)},
 	{IWL_PCI_DEVICE(0x008A, 0x5307, iwl6000g2b_bg_cfg)},
-	{IWL_PCI_DEVICE(0x008A, 0x5321, iwl6000g2b_bgn_cfg)},
 	{IWL_PCI_DEVICE(0x008A, 0x5325, iwl6000g2b_bgn_cfg)},
-	{IWL_PCI_DEVICE(0x008B, 0x5311, iwl6000g2b_bgn_cfg)},
+	{IWL_PCI_DEVICE(0x008A, 0x5327, iwl6000g2b_bg_cfg)},
 	{IWL_PCI_DEVICE(0x008B, 0x5315, iwl6000g2b_bgn_cfg)},
+	{IWL_PCI_DEVICE(0x008B, 0x5317, iwl6000g2b_bg_cfg)},
 	{IWL_PCI_DEVICE(0x0090, 0x5211, iwl6000g2b_2agn_cfg)},
 	{IWL_PCI_DEVICE(0x0090, 0x5215, iwl6000g2b_2bgn_cfg)},
 	{IWL_PCI_DEVICE(0x0090, 0x5216, iwl6000g2b_2abg_cfg)},
@@ -4510,10 +4471,11 @@ static DEFINE_PCI_DEVICE_TABLE(iwl_hw_card_ids) = {
 
 /* 100 Series WiFi */
 	{IWL_PCI_DEVICE(0x08AE, 0x1005, iwl100_bgn_cfg)},
-	{IWL_PCI_DEVICE(0x08AF, 0x1015, iwl100_bgn_cfg)},
-	{IWL_PCI_DEVICE(0x08AE, 0x1025, iwl100_bgn_cfg)},
 	{IWL_PCI_DEVICE(0x08AE, 0x1007, iwl100_bg_cfg)},
-	{IWL_PCI_DEVICE(0x08AE, 0x1017, iwl100_bg_cfg)},
+	{IWL_PCI_DEVICE(0x08AF, 0x1015, iwl100_bgn_cfg)},
+	{IWL_PCI_DEVICE(0x08AF, 0x1017, iwl100_bg_cfg)},
+	{IWL_PCI_DEVICE(0x08AE, 0x1025, iwl100_bgn_cfg)},
+	{IWL_PCI_DEVICE(0x08AE, 0x1027, iwl100_bg_cfg)},
 
 /* 130 Series WiFi */
 	{IWL_PCI_DEVICE(0x0896, 0x5005, iwl130_bgn_cfg)},

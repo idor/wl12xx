@@ -322,7 +322,13 @@ static struct iwl_lib_ops iwl6000_lib = {
 		.query_addr = iwlagn_eeprom_query_addr,
 		.update_enhanced_txpower = iwlcore_eeprom_enhanced_txpower,
 	},
-	.isr = iwl_isr_ict,
+	.isr_ops = {
+		.isr = iwl_isr_ict,
+		.free = iwl_free_isr_ict,
+		.alloc = iwl_alloc_isr_ict,
+		.reset = iwl_reset_ict,
+		.disable = iwl_disable_ict,
+	},
 	.temp_ops = {
 		.temperature = iwlagn_temperature,
 	 },
@@ -389,7 +395,13 @@ static struct iwl_lib_ops iwl6000g2b_lib = {
 		.query_addr = iwlagn_eeprom_query_addr,
 		.update_enhanced_txpower = iwlcore_eeprom_enhanced_txpower,
 	},
-	.isr = iwl_isr_ict,
+	.isr_ops = {
+		.isr = iwl_isr_ict,
+		.free = iwl_free_isr_ict,
+		.alloc = iwl_alloc_isr_ict,
+		.reset = iwl_reset_ict,
+		.disable = iwl_disable_ict,
+	},
 	.temp_ops = {
 		.temperature = iwlagn_temperature,
 	 },
@@ -475,6 +487,7 @@ static struct iwl_base_params iwl6000_base_params = {
 	.ucode_tracing = true,
 	.sensitivity_calib_by_driver = true,
 	.chain_noise_calib_by_driver = true,
+	.shadow_reg_enable = true,
 };
 
 static struct iwl_base_params iwl6050_base_params = {
@@ -498,6 +511,7 @@ static struct iwl_base_params iwl6050_base_params = {
 	.ucode_tracing = true,
 	.sensitivity_calib_by_driver = true,
 	.chain_noise_calib_by_driver = true,
+	.shadow_reg_enable = true,
 };
 static struct iwl_base_params iwl6000_coex_base_params = {
 	.eeprom_size = OTP_LOW_IMAGE_SIZE,
@@ -520,6 +534,7 @@ static struct iwl_base_params iwl6000_coex_base_params = {
 	.ucode_tracing = true,
 	.sensitivity_calib_by_driver = true,
 	.chain_noise_calib_by_driver = true,
+	.shadow_reg_enable = true,
 };
 
 static struct iwl_ht_params iwl6000_ht_params = {

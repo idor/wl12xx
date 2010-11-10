@@ -51,6 +51,7 @@
 #include "iwl-led.h"
 #include "iwl-3945-led.h"
 #include "iwl-3945-debugfs.h"
+#include "iwl-legacy.h"
 
 #define IWL_DECLARE_RATE_INFO(r, ip, in, rp, rn, pp, np)    \
 	[IWL_RATE_##r##M_INDEX] = { IWL_RATE_##r##M_PLCP,   \
@@ -2726,7 +2727,9 @@ static struct iwl_lib_ops iwl3945_lib = {
 	},
 	.send_tx_power	= iwl3945_send_tx_power,
 	.is_valid_rtc_data_addr = iwl3945_hw_valid_rtc_data_addr,
-	.isr = iwl_isr_legacy,
+	.isr_ops = {
+		.isr = iwl_isr_legacy,
+	},
 	.recover_from_tx_stall = iwl_bg_monitor_recover,
 	.check_plcp_health = iwl3945_good_plcp_health,
 
@@ -2746,7 +2749,7 @@ static const struct iwl_legacy_ops iwl3945_legacy_ops = {
 static struct iwl_hcmd_utils_ops iwl3945_hcmd_utils = {
 	.get_hcmd_size = iwl3945_get_hcmd_size,
 	.build_addsta_hcmd = iwl3945_build_addsta_hcmd,
-	.tx_cmd_protection = iwlcore_tx_cmd_protection,
+	.tx_cmd_protection = iwl_legacy_tx_cmd_protection,
 	.request_scan = iwl3945_request_scan,
 	.post_scan = iwl3945_post_scan,
 };

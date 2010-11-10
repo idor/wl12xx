@@ -753,6 +753,12 @@ int iwlagn_hw_nic_init(struct iwl_priv *priv)
 	} else
 		iwlagn_txq_ctx_reset(priv);
 
+	if (priv->cfg->base_params->shadow_reg_enable) {
+		/* enable shadow regs in HW */
+		iwl_set_bit(priv, CSR_MAC_SHADOW_REG_CTRL,
+			0x800FFFFF);
+	}
+
 	set_bit(STATUS_INIT, &priv->status);
 
 	return 0;
@@ -1585,22 +1591,6 @@ int iwlagn_request_scan(struct iwl_priv *priv, struct ieee80211_vif *vif)
 	}
 
 	return ret;
-}
-
-void iwlagn_post_scan(struct iwl_priv *priv)
-{
-	struct iwl_rxon_context *ctx;
-
-	/*
-	 * Since setting the RXON may have been deferred while
-	 * performing the scan, fire one off if needed
-	 */
-	for_each_context(priv, ctx)
-		if (memcmp(&ctx->staging, &ctx->active, sizeof(ctx->staging)))
-			iwlagn_commit_rxon(priv, ctx);
-
-	if (priv->cfg->ops->hcmd->set_pan_params)
-		priv->cfg->ops->hcmd->set_pan_params(priv);
 }
 
 int iwlagn_manage_ibss_station(struct iwl_priv *priv,

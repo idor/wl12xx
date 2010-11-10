@@ -120,6 +120,14 @@ struct iwl_apm_ops {
 	void (*config)(struct iwl_priv *priv);
 };
 
+struct iwl_isr_ops {
+	irqreturn_t (*isr) (int irq, void *data);
+	void (*free)(struct iwl_priv *priv);
+	int (*alloc)(struct iwl_priv *priv);
+	int (*reset)(struct iwl_priv *priv);
+	void (*disable)(struct iwl_priv *priv);
+};
+
 struct iwl_debugfs_ops {
 	ssize_t (*rx_stats_read)(struct file *file, char __user *user_buf,
 				 size_t count, loff_t *ppos);
@@ -193,7 +201,9 @@ struct iwl_lib_ops {
 	/* power */
 	int (*send_tx_power) (struct iwl_priv *priv);
 	void (*update_chain_flags)(struct iwl_priv *priv);
-	irqreturn_t (*isr) (int irq, void *data);
+
+	/* isr */
+	struct iwl_isr_ops isr_ops;
 
 	/* eeprom operations (as defined in iwl-eeprom.h) */
 	struct iwl_eeprom_ops eeprom_ops;
@@ -280,6 +290,7 @@ struct iwl_mod_params {
  *	sensitivity calibration operation
  * @chain_noise_calib_by_driver: driver has the capability to perform
  *	chain noise calibration operation
+ * @shadow_reg_enable: HW shadhow register bit
 */
 struct iwl_base_params {
 	int eeprom_size;
@@ -310,6 +321,7 @@ struct iwl_base_params {
 	const bool ucode_tracing;
 	const bool sensitivity_calib_by_driver;
 	const bool chain_noise_calib_by_driver;
+	const bool shadow_reg_enable;
 };
 /*
  * @advanced_bt_coexist: support advanced bt coexist
@@ -437,9 +449,7 @@ int iwl_mac_change_interface(struct ieee80211_hw *hw,
 			     enum nl80211_iftype newtype, bool newp2p);
 int iwl_alloc_txq_mem(struct iwl_priv *priv);
 void iwl_free_txq_mem(struct iwl_priv *priv);
-void iwlcore_tx_cmd_protection(struct iwl_priv *priv,
-			       struct ieee80211_tx_info *info,
-			       __le16 fc, __le32 *tx_flags);
+
 #ifdef CONFIG_IWLWIFI_DEBUGFS
 int iwl_alloc_traffic_mem(struct iwl_priv *priv);
 void iwl_free_traffic_mem(struct iwl_priv *priv);
@@ -596,7 +606,6 @@ int iwl_enqueue_hcmd(struct iwl_priv *priv, struct iwl_host_cmd *cmd);
 /*****************************************************
  * PCI						     *
  *****************************************************/
-irqreturn_t iwl_isr_legacy(int irq, void *data);
 
 static inline u16 iwl_pcie_link_ctl(struct iwl_priv *priv)
 {

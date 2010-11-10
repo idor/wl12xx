@@ -1687,22 +1687,6 @@ static void iwl4965_txq_update_byte_cnt_tbl(struct iwl_priv *priv,
 }
 
 /**
- * sign_extend - Sign extend a value using specified bit as sign-bit
- *
- * Example: sign_extend(9, 3) would return -7 as bit3 of 1001b is 1
- * and bit0..2 is 001b which when sign extended to 1111111111111001b is -7.
- *
- * @param oper value to sign extend
- * @param index 0 based bit index (0<=index<32) to sign bit
- */
-static s32 sign_extend(u32 oper, int index)
-{
-	u8 shift = 31 - index;
-
-	return (s32)(oper << shift) >> shift;
-}
-
-/**
  * iwl4965_hw_get_temperature - return the calibrated temperature (in Kelvin)
  * @statistics: Provides the temperature reading from the uCode
  *
@@ -1739,9 +1723,9 @@ static int iwl4965_hw_get_temperature(struct iwl_priv *priv)
 	 * "initialize" ALIVE response.
 	 */
 	if (!test_bit(STATUS_TEMPERATURE, &priv->status))
-		vt = sign_extend(R4, 23);
+		vt = sign_extend32(R4, 23);
 	else
-		vt = sign_extend(le32_to_cpu(priv->_agn.statistics.
+		vt = sign_extend32(le32_to_cpu(priv->_agn.statistics.
 				 general.common.temperature), 23);
 
 	IWL_DEBUG_TEMP(priv, "Calib values R[1-3]: %d %d %d R4: %d\n", R1, R2, R3, vt);
@@ -2514,7 +2498,7 @@ static struct iwl_hcmd_utils_ops iwl4965_hcmd_utils = {
 	.build_addsta_hcmd = iwl4965_build_addsta_hcmd,
 	.chain_noise_reset = iwl4965_chain_noise_reset,
 	.gain_computation = iwl4965_gain_computation,
-	.tx_cmd_protection = iwlcore_tx_cmd_protection,
+	.tx_cmd_protection = iwl_legacy_tx_cmd_protection,
 	.calc_rssi = iwl4965_calc_rssi,
 	.request_scan = iwlagn_request_scan,
 	.post_scan = iwl4965_post_scan,
@@ -2561,7 +2545,9 @@ static struct iwl_lib_ops iwl4965_lib = {
 	},
 	.send_tx_power	= iwl4965_send_tx_power,
 	.update_chain_flags = iwl_update_chain_flags,
-	.isr = iwl_isr_legacy,
+	.isr_ops = {
+		.isr = iwl_isr_legacy,
+	},
 	.temp_ops = {
 		.temperature = iwl4965_temperature_calib,
 	},

@@ -31,7 +31,34 @@
 
 #include "iwl-dev.h"
 #include "iwl-core.h"
+#include "iwl-helpers.h"
 #include "iwl-legacy.h"
+
+static void iwl_update_qos(struct iwl_priv *priv, struct iwl_rxon_context *ctx)
+{
+	if (test_bit(STATUS_EXIT_PENDING, &priv->status))
+		return;
+
+	if (!ctx->is_active)
+		return;
+
+	ctx->qos_data.def_qos_parm.qos_flags = 0;
+
+	if (ctx->qos_data.qos_active)
+		ctx->qos_data.def_qos_parm.qos_flags |=
+			QOS_PARAM_FLG_UPDATE_EDCA_MSK;
+
+	if (ctx->ht.enabled)
+		ctx->qos_data.def_qos_parm.qos_flags |= QOS_PARAM_FLG_TGN_MSK;
+
+	IWL_DEBUG_QOS(priv, "send QoS cmd with Qos active=%d FLAGS=0x%X\n",
+		      ctx->qos_data.qos_active,
+		      ctx->qos_data.def_qos_parm.qos_flags);
+
+	iwl_send_cmd_pdu_async(priv, ctx->qos_cmd,
+			       sizeof(struct iwl_qosparam_cmd),
+			       &ctx->qos_data.def_qos_parm, NULL);
+}
 
 /**
  * iwl_legacy_mac_config - mac80211 config callback
@@ -48,6 +75,7 @@ int iwl_legacy_mac_config(struct ieee80211_hw *hw, u32 changed)
 	int ret = 0;
 	u16 ch;
 	int scan_active = 0;
+	bool ht_changed[NUM_IWL_RXON_CTX] = {};
 
 	if (WARN_ON(!priv->cfg->ops->legacy))
 		return -EOPNOTSUPP;
@@ -99,7 +127,10 @@ int iwl_legacy_mac_config(struct ieee80211_hw *hw, u32 changed)
 
 		for_each_context(priv, ctx) {
 			/* Configure HT40 channels */
-			ctx->ht.enabled = conf_is_ht(conf);
+			if (ctx->ht.enabled != conf_is_ht(conf)) {
+				ctx->ht.enabled = conf_is_ht(conf);
+				ht_changed[ctx->ctxid] = true;
+			}
 			if (ctx->ht.enabled) {
 				if (conf_is_ht40_minus(conf)) {
 					ctx->ht.extension_chan_offset =
@@ -176,6 +207,8 @@ int iwl_legacy_mac_config(struct ieee80211_hw *hw, u32 changed)
 		else
 			IWL_DEBUG_INFO(priv,
 				"Not re-sending same RXON configuration.\n");
+		if (ht_changed[ctx->ctxid])
+			iwl_update_qos(priv, ctx);
 	}
 
 out:
@@ -292,32 +325,6 @@ static void iwl_ht_conf(struct iwl_priv *priv,
 	}
 
 	IWL_DEBUG_ASSOC(priv, "leave\n");
-}
-
-static void iwl_update_qos(struct iwl_priv *priv, struct iwl_rxon_context *ctx)
-{
-	if (test_bit(STATUS_EXIT_PENDING, &priv->status))
-		return;
-
-	if (!ctx->is_active)
-		return;
-
-	ctx->qos_data.def_qos_parm.qos_flags = 0;
-
-	if (ctx->qos_data.qos_active)
-		ctx->qos_data.def_qos_parm.qos_flags |=
-			QOS_PARAM_FLG_UPDATE_EDCA_MSK;
-
-	if (ctx->ht.enabled)
-		ctx->qos_data.def_qos_parm.qos_flags |= QOS_PARAM_FLG_TGN_MSK;
-
-	IWL_DEBUG_QOS(priv, "send QoS cmd with Qos active=%d FLAGS=0x%X\n",
-		      ctx->qos_data.qos_active,
-		      ctx->qos_data.def_qos_parm.qos_flags);
-
-	iwl_send_cmd_pdu_async(priv, ctx->qos_cmd,
-			       sizeof(struct iwl_qosparam_cmd),
-			       &ctx->qos_data.def_qos_parm, NULL);
 }
 
 static inline void iwl_set_no_assoc(struct iwl_priv *priv,
@@ -558,3 +565,98 @@ void iwl_legacy_mac_bss_info_changed(struct ieee80211_hw *hw,
 	IWL_DEBUG_MAC80211(priv, "leave\n");
 }
 EXPORT_SYMBOL(iwl_legacy_mac_bss_info_changed);
+
+irqreturn_t iwl_isr_legacy(int irq, void *data)
+{
+	struct iwl_priv *priv = data;
+	u32 inta, inta_mask;
+	u32 inta_fh;
+	unsigned long flags;
+	if (!priv)
+		return IRQ_NONE;
+
+	spin_lock_irqsave(&priv->lock, flags);
+
+	/* Disable (but don't clear!) interrupts here to avoid
+	 *    back-to-back ISRs and sporadic interrupts from our NIC.
+	 * If we have something to service, the tasklet will re-enable ints.
+	 * If we *don't* have something, we'll re-enable before leaving here. */
+	inta_mask = iwl_read32(priv, CSR_INT_MASK);  /* just for debug */
+	iwl_write32(priv, CSR_INT_MASK, 0x00000000);
+
+	/* Discover which interrupts are active/pending */
+	inta = iwl_read32(priv, CSR_INT);
+	inta_fh = iwl_read32(priv, CSR_FH_INT_STATUS);
+
+	/* Ignore interrupt if there's nothing in NIC to service.
+	 * This may be due to IRQ shared with another device,
+	 * or due to sporadic interrupts thrown from our NIC. */
+	if (!inta && !inta_fh) {
+		IWL_DEBUG_ISR(priv,
+			"Ignore interrupt, inta == 0, inta_fh == 0\n");
+		goto none;
+	}
+
+	if ((inta == 0xFFFFFFFF) || ((inta & 0xFFFFFFF0) == 0xa5a5a5a0)) {
+		/* Hardware disappeared. It might have already raised
+		 * an interrupt */
+		IWL_WARN(priv, "HARDWARE GONE?? INTA == 0x%08x\n", inta);
+		goto unplugged;
+	}
+
+	IWL_DEBUG_ISR(priv, "ISR inta 0x%08x, enabled 0x%08x, fh 0x%08x\n",
+		      inta, inta_mask, inta_fh);
+
+	inta &= ~CSR_INT_BIT_SCD;
+
+	/* iwl_irq_tasklet() will service interrupts and re-enable them */
+	if (likely(inta || inta_fh))
+		tasklet_schedule(&priv->irq_tasklet);
+
+unplugged:
+	spin_unlock_irqrestore(&priv->lock, flags);
+	return IRQ_HANDLED;
+
+none:
+	/* re-enable interrupts here since we don't have anything to service. */
+	/* only Re-enable if diabled by irq */
+	if (test_bit(STATUS_INT_ENABLED, &priv->status))
+		iwl_enable_interrupts(priv);
+	spin_unlock_irqrestore(&priv->lock, flags);
+	return IRQ_NONE;
+}
+EXPORT_SYMBOL(iwl_isr_legacy);
+
+/*
+ *  iwl_legacy_tx_cmd_protection: Set rts/cts. 3945 and 4965 only share this
+ *  function.
+ */
+void iwl_legacy_tx_cmd_protection(struct iwl_priv *priv,
+			       struct ieee80211_tx_info *info,
+			       __le16 fc, __le32 *tx_flags)
+{
+	if (info->control.rates[0].flags & IEEE80211_TX_RC_USE_RTS_CTS) {
+		*tx_flags |= TX_CMD_FLG_RTS_MSK;
+		*tx_flags &= ~TX_CMD_FLG_CTS_MSK;
+		*tx_flags |= TX_CMD_FLG_FULL_TXOP_PROT_MSK;
+
+		if (!ieee80211_is_mgmt(fc))
+			return;
+
+		switch (fc & cpu_to_le16(IEEE80211_FCTL_STYPE)) {
+		case cpu_to_le16(IEEE80211_STYPE_AUTH):
+		case cpu_to_le16(IEEE80211_STYPE_DEAUTH):
+		case cpu_to_le16(IEEE80211_STYPE_ASSOC_REQ):
+		case cpu_to_le16(IEEE80211_STYPE_REASSOC_REQ):
+			*tx_flags &= ~TX_CMD_FLG_RTS_MSK;
+			*tx_flags |= TX_CMD_FLG_CTS_MSK;
+			break;
+		}
+	} else if (info->control.rates[0].flags &
+		   IEEE80211_TX_RC_USE_CTS_PROTECT) {
+		*tx_flags &= ~TX_CMD_FLG_RTS_MSK;
+		*tx_flags |= TX_CMD_FLG_CTS_MSK;
+		*tx_flags |= TX_CMD_FLG_FULL_TXOP_PROT_MSK;
+	}
+}
+EXPORT_SYMBOL(iwl_legacy_tx_cmd_protection);

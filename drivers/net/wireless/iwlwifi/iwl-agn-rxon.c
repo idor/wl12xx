@@ -96,7 +96,6 @@ int iwlagn_commit_rxon(struct iwl_priv *priv, struct iwl_rxon_context *ctx)
 {
 	/* cast away the const for active_rxon in this function */
 	struct iwl_rxon_cmd *active = (void *)&ctx->active;
-	bool old_assoc = !!(ctx->active.filter_flags & RXON_FILTER_ASSOC_MSK);
 	bool new_assoc = !!(ctx->staging.filter_flags & RXON_FILTER_ASSOC_MSK);
 	int ret;
 
@@ -172,37 +171,30 @@ int iwlagn_commit_rxon(struct iwl_priv *priv, struct iwl_rxon_context *ctx)
 		       ctx->staging.bssid_addr);
 
 	/*
-	 * If we are currently associated and the new config is also
-	 * going to be associated, OR if the new config is simply not
-	 * associated, clear associated.
+	 * Always clear associated first, but with the correct config.
+	 * This is required as for example station addition for the
+	 * AP station must be done after the BSSID is set to correctly
+	 * set up filters in the device.
 	 */
-	if ((old_assoc && new_assoc) || !new_assoc) {
-		struct iwl_rxon_cmd *send = active;
+	if (ctx->ctxid == IWL_RXON_CTX_BSS)
+		ret = iwlagn_disable_bss(priv, ctx, &ctx->staging);
+	else
+		ret = iwlagn_disable_pan(priv, ctx, &ctx->staging);
+	if (ret)
+		return ret;
 
-		if (!new_assoc)
-			send = &ctx->staging;
+	memcpy(active, &ctx->staging, sizeof(*active));
 
-		if (ctx->ctxid == IWL_RXON_CTX_BSS)
-			ret = iwlagn_disable_bss(priv, ctx, send);
-		else
-			ret = iwlagn_disable_pan(priv, ctx, send);
-		if (ret)
-			return ret;
-
-		if (send != active)
-			memcpy(active, send, sizeof(*active));
-
-		/*
-		 * Un-assoc RXON clears the station table and WEP
-		 * keys, so we have to restore those afterwards.
-		 */
-		iwl_clear_ucode_stations(priv, ctx);
-		iwl_restore_stations(priv, ctx);
-		ret = iwl_restore_default_wep_keys(priv, ctx);
-		if (ret) {
-			IWL_ERR(priv, "Failed to restore WEP keys (%d)\n", ret);
-			return ret;
-		}
+	/*
+	 * Un-assoc RXON clears the station table and WEP
+	 * keys, so we have to restore those afterwards.
+	 */
+	iwl_clear_ucode_stations(priv, ctx);
+	iwl_restore_stations(priv, ctx);
+	ret = iwl_restore_default_wep_keys(priv, ctx);
+	if (ret) {
+		IWL_ERR(priv, "Failed to restore WEP keys (%d)\n", ret);
+		return ret;
 	}
 
 	/* RXON timing must be before associated RXON */
@@ -269,6 +261,34 @@ int iwlagn_commit_rxon(struct iwl_priv *priv, struct iwl_rxon_context *ctx)
 	return 0;
 }
 
+static void iwlagn_update_qos(struct iwl_priv *priv,
+			      struct iwl_rxon_context *ctx)
+{
+	int ret;
+
+	if (!ctx->is_active)
+		return;
+
+	ctx->qos_data.def_qos_parm.qos_flags = 0;
+
+	if (ctx->qos_data.qos_active)
+		ctx->qos_data.def_qos_parm.qos_flags |=
+			QOS_PARAM_FLG_UPDATE_EDCA_MSK;
+
+	if (ctx->ht.enabled)
+		ctx->qos_data.def_qos_parm.qos_flags |= QOS_PARAM_FLG_TGN_MSK;
+
+	IWL_DEBUG_QOS(priv, "send QoS cmd with Qos active=%d FLAGS=0x%X\n",
+		      ctx->qos_data.qos_active,
+		      ctx->qos_data.def_qos_parm.qos_flags);
+
+	ret = iwl_send_cmd_pdu(priv, ctx->qos_cmd,
+			       sizeof(struct iwl_qosparam_cmd),
+			       &ctx->qos_data.def_qos_parm);
+	if (ret)
+		IWL_ERR(priv, "Failed to update QoS\n");
+}
+
 int iwlagn_mac_config(struct ieee80211_hw *hw, u32 changed)
 {
 	struct iwl_priv *priv = hw->priv;
@@ -277,6 +297,7 @@ int iwlagn_mac_config(struct ieee80211_hw *hw, u32 changed)
 	struct ieee80211_channel *channel = conf->channel;
 	const struct iwl_channel_info *ch_info;
 	int ret = 0;
+	bool ht_changed[NUM_IWL_RXON_CTX] = {};
 
 	IWL_DEBUG_MAC80211(priv, "changed %#x", changed);
 
@@ -324,7 +345,11 @@ int iwlagn_mac_config(struct ieee80211_hw *hw, u32 changed)
 
 		for_each_context(priv, ctx) {
 			/* Configure HT40 channels */
-			ctx->ht.enabled = conf_is_ht(conf);
+			if (ctx->ht.enabled != conf_is_ht(conf)) {
+				ctx->ht.enabled = conf_is_ht(conf);
+				ht_changed[ctx->ctxid] = true;
+			}
+
 			if (ctx->ht.enabled) {
 				if (conf_is_ht40_minus(conf)) {
 					ctx->ht.extension_chan_offset =
@@ -392,38 +417,12 @@ int iwlagn_mac_config(struct ieee80211_hw *hw, u32 changed)
 		if (!memcmp(&ctx->staging, &ctx->active, sizeof(ctx->staging)))
 			continue;
 		iwlagn_commit_rxon(priv, ctx);
+		if (ht_changed[ctx->ctxid])
+			iwlagn_update_qos(priv, ctx);
 	}
  out:
 	mutex_unlock(&priv->mutex);
 	return ret;
-}
-
-static void iwlagn_update_qos(struct iwl_priv *priv,
-			      struct iwl_rxon_context *ctx)
-{
-	int ret;
-
-	if (!ctx->is_active)
-		return;
-
-	ctx->qos_data.def_qos_parm.qos_flags = 0;
-
-	if (ctx->qos_data.qos_active)
-		ctx->qos_data.def_qos_parm.qos_flags |=
-			QOS_PARAM_FLG_UPDATE_EDCA_MSK;
-
-	if (ctx->ht.enabled)
-		ctx->qos_data.def_qos_parm.qos_flags |= QOS_PARAM_FLG_TGN_MSK;
-
-	IWL_DEBUG_QOS(priv, "send QoS cmd with Qos active=%d FLAGS=0x%X\n",
-		      ctx->qos_data.qos_active,
-		      ctx->qos_data.def_qos_parm.qos_flags);
-
-	ret = iwl_send_cmd_pdu(priv, ctx->qos_cmd,
-			       sizeof(struct iwl_qosparam_cmd),
-			       &ctx->qos_data.def_qos_parm);
-	if (ret)
-		IWL_ERR(priv, "Failed to update QoS\n");
 }
 
 static void iwlagn_check_needed_chains(struct iwl_priv *priv,
@@ -451,11 +450,13 @@ static void iwlagn_check_needed_chains(struct iwl_priv *priv,
 					>> IEEE80211_HT_MCS_TX_MAX_STREAMS_SHIFT;
 			maxstreams += 1;
 
+			need_multiple = true;
+
 			if ((ht_cap->mcs.rx_mask[1] == 0) &&
 			    (ht_cap->mcs.rx_mask[2] == 0))
 				need_multiple = false;
 			if (maxstreams <= 1)
-				need_multiple = true;
+				need_multiple = false;
 		} else {
 			/*
 			 * If at all, this can only happen through a race
@@ -537,6 +538,7 @@ void iwlagn_bss_info_changed(struct ieee80211_hw *hw,
 		ctx->ht.non_gf_sta_present = !!(bss_conf->ht_operation_mode &
 					IEEE80211_HT_OP_MODE_NON_GF_STA_PRSNT);
 		iwlagn_check_needed_chains(priv, ctx, bss_conf);
+		iwl_set_rxon_ht(priv, &priv->current_ht_config);
 	}
 
 	if (priv->cfg->ops->hcmd->set_rxon_chain)
@@ -568,6 +570,20 @@ void iwlagn_bss_info_changed(struct ieee80211_hw *hw,
 	if (force || memcmp(&ctx->staging, &ctx->active, sizeof(ctx->staging)))
 		iwlagn_commit_rxon(priv, ctx);
 
+	if (changes & BSS_CHANGED_ASSOC && bss_conf->assoc) {
+		/*
+		 * The chain noise calibration will enable PM upon
+		 * completion. If calibration has already been run
+		 * then we need to enable power management here.
+		 */
+		if (priv->chain_noise_data.state == IWL_CHAIN_NOISE_DONE)
+			iwl_power_update_mode(priv, false);
+
+		/* Enable RX differential gain and sensitivity calibrations */
+		iwl_chain_noise_reset(priv);
+		priv->start_calib = 1;
+	}
+
 	if (changes & BSS_CHANGED_IBSS) {
 		ret = iwlagn_manage_ibss_station(priv, vif,
 						 bss_conf->ibss_joined);
@@ -584,4 +600,20 @@ void iwlagn_bss_info_changed(struct ieee80211_hw *hw,
 	}
 
 	mutex_unlock(&priv->mutex);
+}
+
+void iwlagn_post_scan(struct iwl_priv *priv)
+{
+	struct iwl_rxon_context *ctx;
+
+	/*
+	 * Since setting the RXON may have been deferred while
+	 * performing the scan, fire one off if needed
+	 */
+	for_each_context(priv, ctx)
+		if (memcmp(&ctx->staging, &ctx->active, sizeof(ctx->staging)))
+			iwlagn_commit_rxon(priv, ctx);
+
+	if (priv->cfg->ops->hcmd->set_pan_params)
+		priv->cfg->ops->hcmd->set_pan_params(priv);
 }
