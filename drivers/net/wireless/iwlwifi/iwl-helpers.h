@@ -107,8 +107,10 @@ static inline u8 iwl_virtual_agg_queue_num(u8 ac, u8 hwq)
 	return 0x80 | (hwq << 2) | ac;
 }
 
-static inline void iwl_wake_queue(struct iwl_priv *priv, u8 queue)
+static inline void iwl_wake_queue(struct iwl_priv *priv,
+				  struct iwl_tx_queue *txq)
 {
+	u8 queue = txq->swq_id;
 	u8 ac = queue;
 	u8 hwq = queue;
 
@@ -122,8 +124,10 @@ static inline void iwl_wake_queue(struct iwl_priv *priv, u8 queue)
 			ieee80211_wake_queue(priv->hw, ac);
 }
 
-static inline void iwl_stop_queue(struct iwl_priv *priv, u8 queue)
+static inline void iwl_stop_queue(struct iwl_priv *priv,
+				  struct iwl_tx_queue *txq)
 {
+	u8 queue = txq->swq_id;
 	u8 ac = queue;
 	u8 hwq = queue;
 
