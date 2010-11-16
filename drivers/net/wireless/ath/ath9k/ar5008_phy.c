@@ -1579,6 +1579,51 @@ static void ar5008_hw_set_nf_limits(struct ath_hw *ah)
 	ah->nf_5g.nominal = AR_PHY_CCA_NOM_VAL_5416_5GHZ;
 }
 
+static void ar5008_hw_set_radar_params(struct ath_hw *ah,
+				       struct ath_hw_radar_conf *conf)
+{
+	u32 radar_0 = 0, radar_1 = 0;
+
+	if (!conf) {
+		REG_CLR_BIT(ah, AR_PHY_RADAR_0, AR_PHY_RADAR_0_ENA);
+		return;
+	}
+
+	radar_0 |= AR_PHY_RADAR_0_ENA | AR_PHY_RADAR_0_FFT_ENA;
+	radar_0 |= SM(conf->fir_power, AR_PHY_RADAR_0_FIRPWR);
+	radar_0 |= SM(conf->radar_rssi, AR_PHY_RADAR_0_RRSSI);
+	radar_0 |= SM(conf->pulse_height, AR_PHY_RADAR_0_HEIGHT);
+	radar_0 |= SM(conf->pulse_rssi, AR_PHY_RADAR_0_PRSSI);
+	radar_0 |= SM(conf->pulse_inband, AR_PHY_RADAR_0_INBAND);
+
+	radar_1 |= AR_PHY_RADAR_1_MAX_RRSSI;
+	radar_1 |= AR_PHY_RADAR_1_BLOCK_CHECK;
+	radar_1 |= SM(conf->pulse_maxlen, AR_PHY_RADAR_1_MAXLEN);
+	radar_1 |= SM(conf->pulse_inband_step, AR_PHY_RADAR_1_RELSTEP_THRESH);
+	radar_1 |= SM(conf->radar_inband, AR_PHY_RADAR_1_RELPWR_THRESH);
+
+	REG_WRITE(ah, AR_PHY_RADAR_0, radar_0);
+	REG_WRITE(ah, AR_PHY_RADAR_1, radar_1);
+	if (conf->ext_channel)
+		REG_SET_BIT(ah, AR_PHY_RADAR_EXT, AR_PHY_RADAR_EXT_ENA);
+	else
+		REG_CLR_BIT(ah, AR_PHY_RADAR_EXT, AR_PHY_RADAR_EXT_ENA);
+}
+
+static void ar5008_hw_set_radar_conf(struct ath_hw *ah)
+{
+	struct ath_hw_radar_conf *conf = &ah->radar_conf;
+
+	conf->fir_power = -33;
+	conf->radar_rssi = 20;
+	conf->pulse_height = 10;
+	conf->pulse_rssi = 24;
+	conf->pulse_inband = 15;
+	conf->pulse_maxlen = 255;
+	conf->pulse_inband_step = 12;
+	conf->radar_inband = 8;
+}
+
 void ar5008_hw_attach_phy_ops(struct ath_hw *ah)
 {
 	struct ath_hw_private_ops *priv_ops = ath9k_hw_private_ops(ah);
@@ -1609,6 +1654,7 @@ void ar5008_hw_attach_phy_ops(struct ath_hw *ah)
 	priv_ops->restore_chainmask = ar5008_restore_chainmask;
 	priv_ops->set_diversity = ar5008_set_diversity;
 	priv_ops->do_getnf = ar5008_hw_do_getnf;
+	priv_ops->set_radar_params = ar5008_hw_set_radar_params;
 
 	if (modparam_force_new_ani) {
 		priv_ops->ani_control = ar5008_hw_ani_control_new;
@@ -1624,5 +1670,6 @@ void ar5008_hw_attach_phy_ops(struct ath_hw *ah)
 		priv_ops->compute_pll_control = ar5008_hw_compute_pll_control;
 
 	ar5008_hw_set_nf_limits(ah);
+	ar5008_hw_set_radar_conf(ah);
 	memcpy(ah->nf_regs, ar5416_cca_regs, sizeof(ah->nf_regs));
 }
