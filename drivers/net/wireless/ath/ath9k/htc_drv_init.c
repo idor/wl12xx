@@ -308,7 +308,7 @@ static void ath9k_regwrite_single(void *hw_priv, u32 val, u32 reg_offset)
 	struct ath_hw *ah = (struct ath_hw *) hw_priv;
 	struct ath_common *common = ath9k_hw_common(ah);
 	struct ath9k_htc_priv *priv = (struct ath9k_htc_priv *) common->priv;
-	__be32 buf[2] = {
+	const __be32 buf[2] = {
 		cpu_to_be32(reg_offset),
 		cpu_to_be32(val),
 	};
@@ -641,6 +641,7 @@ static int ath9k_init_priv(struct ath9k_htc_priv *priv,
 
 	ah->hw_version.devid = devid;
 	ah->hw_version.subsysid = 0; /* FIXME */
+	ah->ah_flags |= AH_USE_EEPROM;
 	priv->ah = ah;
 
 	common = ath9k_hw_common(ah);
