@@ -219,7 +219,7 @@ enum ieee80211_bss_change {
  * @basic_rates: bitmap of basic rates, each bit stands for an
  *	index into the rate table configured by the driver in
  *	the current band.
- * @mcast_rate: multicast rate for AP and Ad-Hoc (in 100 kbps)
+ * @mcast_rate: per-band multicast rate index + 1 (0: disabled)
  * @bssid: The BSSID for this BSS
  * @enable_beacon: whether beaconing should be enabled or not
  * @channel_type: Channel type for this BSS -- the hardware might be
@@ -259,7 +259,7 @@ struct ieee80211_bss_conf {
 	u16 assoc_capability;
 	u64 timestamp;
 	u32 basic_rates;
-	u32 mcast_rate;
+	int mcast_rate[IEEE80211_NUM_BANDS];
 	u16 ht_operation_mode;
 	s32 cqm_rssi_thold;
 	u32 cqm_rssi_hyst;
@@ -1745,6 +1745,13 @@ enum ieee80211_ampdu_mlme_action {
  *	completion of the channel switch.
  *
  * @napi_poll: Poll Rx queue for incoming data frames.
+ *
+ * @set_antenna: Set antenna configuration (tx_ant, rx_ant) on the device.
+ *	Parameters are bitmaps of allowed antennas to use for TX/RX. Drivers may
+ *	reject TX/RX mask combinations they cannot support by returning -EINVAL
+ *	(also see nl80211.h @NL80211_ATTR_WIPHY_ANTENNA_TX).
+ *
+ * @get_antenna: Get current antenna configuration from device (tx_ant, rx_ant).
  */
 struct ieee80211_ops {
 	int (*tx)(struct ieee80211_hw *hw, struct sk_buff *skb);

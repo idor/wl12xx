@@ -3600,6 +3600,34 @@ static int nl80211_disassociate(struct sk_buff *skb, struct genl_info *info)
 				      local_state_change);
 }
 
+static bool
+nl80211_parse_mcast_rate(struct cfg80211_registered_device *rdev,
+			 int mcast_rate[IEEE80211_NUM_BANDS],
+			 int rateval)
+{
+	struct wiphy *wiphy = &rdev->wiphy;
+	bool found = false;
+	int band, i;
+
+	for (band = 0; band < IEEE80211_NUM_BANDS; band++) {
+		struct ieee80211_supported_band *sband;
+
+		sband = wiphy->bands[band];
+		if (!sband)
+			continue;
+
+		for (i = 0; i < sband->n_bitrates; i++) {
+			if (sband->bitrates[i].bitrate == rateval) {
+				mcast_rate[band] = i + 1;
+				found = true;
+				break;
+			}
+		}
+	}
+
+	return found;
+}
+
 static int nl80211_join_ibss(struct sk_buff *skb, struct genl_info *info)
 {
 	struct cfg80211_registered_device *rdev = info->user_ptr[0];
@@ -3683,9 +3711,11 @@ static int nl80211_join_ibss(struct sk_buff *skb, struct genl_info *info)
 				return -EINVAL;
 		}
 	}
-	if (info->attrs[NL80211_ATTR_MCAST_RATE])
-		ibss.mcast_rate =
-			nla_get_u32(info->attrs[NL80211_ATTR_MCAST_RATE]);
+
+	if (info->attrs[NL80211_ATTR_MCAST_RATE] &&
+	    !nl80211_parse_mcast_rate(rdev, ibss.mcast_rate,
+			nla_get_u32(info->attrs[NL80211_ATTR_MCAST_RATE])))
+		return -EINVAL;
 
 	if (ibss.privacy && info->attrs[NL80211_ATTR_KEYS]) {
 		connkeys = nl80211_parse_connkeys(rdev,
@@ -5668,6 +5698,51 @@ nl80211_send_cqm_rssi_notify(struct cfg80211_registered_device *rdev,
 
 	NLA_PUT_U32(msg, NL80211_ATTR_CQM_RSSI_THRESHOLD_EVENT,
 		    rssi_event);
+
+	nla_nest_end(msg, pinfoattr);
+
+	if (genlmsg_end(msg, hdr) < 0) {
+		nlmsg_free(msg);
+		return;
+	}
+
+	genlmsg_multicast_netns(wiphy_net(&rdev->wiphy), msg, 0,
+				nl80211_mlme_mcgrp.id, gfp);
+	return;
+
+ nla_put_failure:
+	genlmsg_cancel(msg, hdr);
+	nlmsg_free(msg);
+}
+
+void
+nl80211_send_cqm_pktloss_notify(struct cfg80211_registered_device *rdev,
+				struct net_device *netdev, const u8 *peer,
+				u32 num_packets, gfp_t gfp)
+{
+	struct sk_buff *msg;
+	struct nlattr *pinfoattr;
+	void *hdr;
+
+	msg = nlmsg_new(NLMSG_GOODSIZE, gfp);
+	if (!msg)
+		return;
+
+	hdr = nl80211hdr_put(msg, 0, 0, 0, NL80211_CMD_NOTIFY_CQM);
+	if (!hdr) {
+		nlmsg_free(msg);
+		return;
+	}
+
+	NLA_PUT_U32(msg, NL80211_ATTR_WIPHY, rdev->wiphy_idx);
+	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, netdev->ifindex);
+	NLA_PUT(msg, NL80211_ATTR_MAC, ETH_ALEN, peer);
+
+	pinfoattr = nla_nest_start(msg, NL80211_ATTR_CQM);
+	if (!pinfoattr)
+		goto nla_put_failure;
+
+	NLA_PUT_U32(msg, NL80211_ATTR_CQM_PKT_LOSS_EVENT, num_packets);
 
 	nla_nest_end(msg, pinfoattr);
 

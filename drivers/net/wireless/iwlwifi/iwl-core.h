@@ -334,6 +334,7 @@ struct iwl_base_params {
  * @agg_time_limit: maximum number of uSec in aggregation
  * @ampdu_factor: Maximum A-MPDU length factor
  * @ampdu_density: Minimum A-MPDU spacing
+ * @bt_sco_disable: uCode should not response to BT in SCO/ESCO mode
 */
 struct iwl_bt_params {
 	bool advanced_bt_coexist;
@@ -343,6 +344,7 @@ struct iwl_bt_params {
 	u16 agg_time_limit;
 	u8 ampdu_factor;
 	u8 ampdu_density;
+	bool bt_sco_disable;
 };
 /*
  * @use_rts_for_aggregation: use rts/cts protection for HT traffic
@@ -364,6 +366,7 @@ struct iwl_ht_params {
  * @need_temp_offset_calib: need to perform temperature offset calibration
  * @scan_antennas: available antenna for scan operation
  * @led_mode: 0=blinking, 1=On(RF On)/Off(RF Off)
+ * @adv_pm: advance power management
  *
  * We enable the driver to be backward compatible wrt API version. The
  * driver specifies which APIs it supports (with @ucode_api_max being the
@@ -411,6 +414,7 @@ struct iwl_cfg {
 	u8 scan_rx_antennas[IEEE80211_NUM_BANDS];
 	u8 scan_tx_antennas[IEEE80211_NUM_BANDS];
 	enum iwl_led_mode led_mode;
+	const bool adv_pm;
 };
 
 /***************************
