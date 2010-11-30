@@ -80,7 +80,8 @@ MODULE_SUPPORTED_DEVICE("Atheros 5xxx WLAN cards");
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_VERSION("0.6.0 (EXPERIMENTAL)");
 
-static int ath5k_reset(struct ath5k_softc *sc, struct ieee80211_channel *chan);
+static int ath5k_reset(struct ath5k_softc *sc, struct ieee80211_channel *chan,
+								bool skip_pcu);
 static int ath5k_beacon_update(struct ieee80211_hw *hw,
 		struct ieee80211_vif *vif);
 static void ath5k_beacon_update_timers(struct ath5k_softc *sc, u64 bc_tsf);
@@ -327,14 +328,12 @@ ath5k_copy_channels(struct ath5k_hw *ah,
 
 	switch (mode) {
 	case AR5K_MODE_11A:
-	case AR5K_MODE_11A_TURBO:
 		/* 1..220, but 2GHz frequencies are filtered by check_channel */
 		size = 220 ;
 		chfreq = CHANNEL_5GHZ;
 		break;
 	case AR5K_MODE_11B:
 	case AR5K_MODE_11G:
-	case AR5K_MODE_11G_TURBO:
 		size = 26;
 		chfreq = CHANNEL_2GHZ;
 		break;
@@ -362,11 +361,6 @@ ath5k_copy_channels(struct ath5k_hw *ah,
 		case AR5K_MODE_11A:
 		case AR5K_MODE_11G:
 			channels[count].hw_value = chfreq | CHANNEL_OFDM;
-			break;
-		case AR5K_MODE_11A_TURBO:
-		case AR5K_MODE_11G_TURBO:
-			channels[count].hw_value = chfreq |
-				CHANNEL_OFDM | CHANNEL_TURBO;
 			break;
 		case AR5K_MODE_11B:
 			channels[count].hw_value = CHANNEL_B;
@@ -496,7 +490,7 @@ ath5k_chan_set(struct ath5k_softc *sc, struct ieee80211_channel *chan)
 	 * hardware at the new frequency, and then re-enable
 	 * the relevant bits of the h/w.
 	 */
-	return ath5k_reset(sc, chan);
+	return ath5k_reset(sc, chan, true);
 }
 
 static void
@@ -1063,62 +1057,44 @@ err:
 	return ret;
 }
 
-static void
-ath5k_txq_drainq(struct ath5k_softc *sc, struct ath5k_txq *txq)
-{
-	struct ath5k_buf *bf, *bf0;
-
-	/*
-	 * NB: this assumes output has been stopped and
-	 *     we do not need to block ath5k_tx_tasklet
-	 */
-	spin_lock_bh(&txq->lock);
-	list_for_each_entry_safe(bf, bf0, &txq->q, list) {
-		ath5k_debug_printtxbuf(sc, bf);
-
-		ath5k_txbuf_free_skb(sc, bf);
-
-		spin_lock_bh(&sc->txbuflock);
-		list_move_tail(&bf->list, &sc->txbuf);
-		sc->txbuf_len++;
-		txq->txq_len--;
-		spin_unlock_bh(&sc->txbuflock);
-	}
-	txq->link = NULL;
-	txq->txq_poll_mark = false;
-	spin_unlock_bh(&txq->lock);
-}
-
-/*
- * Drain the transmit queues and reclaim resources.
+/**
+ * ath5k_drain_tx_buffs - Empty tx buffers
+ *
+ * @sc The &struct ath5k_softc
+ *
+ * Empty tx buffers from all queues in preparation
+ * of a reset or during shutdown.
+ *
+ * NB:	this assumes output has been stopped and
+ *	we do not need to block ath5k_tx_tasklet
  */
 static void
-ath5k_txq_cleanup(struct ath5k_softc *sc)
+ath5k_drain_tx_buffs(struct ath5k_softc *sc)
 {
-	struct ath5k_hw *ah = sc->ah;
-	unsigned int i;
+	struct ath5k_txq *txq;
+	struct ath5k_buf *bf, *bf0;
+	int i;
 
-	/* XXX return value */
-	if (likely(!test_bit(ATH_STAT_INVALID, sc->status))) {
-		/* don't touch the hardware if marked invalid */
-		ath5k_hw_stop_tx_dma(ah, sc->bhalq);
-		ATH5K_DBG(sc, ATH5K_DEBUG_RESET, "beacon queue %x\n",
-			ath5k_hw_get_txdp(ah, sc->bhalq));
-		for (i = 0; i < ARRAY_SIZE(sc->txqs); i++)
-			if (sc->txqs[i].setup) {
-				ath5k_hw_stop_tx_dma(ah, sc->txqs[i].qnum);
-				ATH5K_DBG(sc, ATH5K_DEBUG_RESET, "txq [%u] %x, "
-					"link %p\n",
-					sc->txqs[i].qnum,
-					ath5k_hw_get_txdp(ah,
-							sc->txqs[i].qnum),
-					sc->txqs[i].link);
+	for (i = 0; i < ARRAY_SIZE(sc->txqs); i++) {
+		if (sc->txqs[i].setup) {
+			txq = &sc->txqs[i];
+			spin_lock_bh(&txq->lock);
+			list_for_each_entry_safe(bf, bf0, &txq->q, list) {
+				ath5k_debug_printtxbuf(sc, bf);
+
+				ath5k_txbuf_free_skb(sc, bf);
+
+				spin_lock_bh(&sc->txbuflock);
+				list_move_tail(&bf->list, &sc->txbuf);
+				sc->txbuf_len++;
+				txq->txq_len--;
+				spin_unlock_bh(&sc->txbuflock);
 			}
+			txq->link = NULL;
+			txq->txq_poll_mark = false;
+			spin_unlock_bh(&txq->lock);
+		}
 	}
-
-	for (i = 0; i < ARRAY_SIZE(sc->txqs); i++)
-		if (sc->txqs[i].setup)
-			ath5k_txq_drainq(sc, &sc->txqs[i]);
 }
 
 static void
@@ -1178,16 +1154,19 @@ err:
 }
 
 /*
- * Disable the receive h/w in preparation for a reset.
+ * Disable the receive logic on PCU (DRU)
+ * In preparation for a shutdown.
+ *
+ * Note: Doesn't stop rx DMA, ath5k_hw_dma_stop
+ * does.
  */
 static void
 ath5k_rx_stop(struct ath5k_softc *sc)
 {
 	struct ath5k_hw *ah = sc->ah;
 
-	ath5k_hw_stop_rx_pcu(ah);	/* disable PCU */
 	ath5k_hw_set_rx_filter(ah, 0);	/* clear recv filter */
-	ath5k_hw_stop_rx_dma(ah);	/* disable DMA engine */
+	ath5k_hw_stop_rx_pcu(ah);	/* disable PCU */
 
 	ath5k_debug_printrxbuffs(sc, ah);
 }
@@ -1937,7 +1916,7 @@ ath5k_beacon_send(struct ath5k_softc *sc)
 	 * This should never fail since we check above that no frames
 	 * are still pending on the queue.
 	 */
-	if (unlikely(ath5k_hw_stop_tx_dma(ah, sc->bhalq))) {
+	if (unlikely(ath5k_hw_stop_beacon_queue(ah, sc->bhalq))) {
 		ATH5K_WARN(sc, "beacon queue %u didn't start/stop ?\n", sc->bhalq);
 		/* NB: hw still stops DMA, so proceed */
 	}
@@ -2106,7 +2085,7 @@ ath5k_beacon_config(struct ath5k_softc *sc)
 		} else
 			ath5k_beacon_update_timers(sc, -1);
 	} else {
-		ath5k_hw_stop_tx_dma(sc->ah, sc->bhalq);
+		ath5k_hw_stop_beacon_queue(sc->ah, sc->bhalq);
 	}
 
 	ath5k_hw_set_imr(ah, sc->imask);
@@ -2342,7 +2321,7 @@ ath5k_tx_complete_poll_work(struct work_struct *work)
 	if (needreset) {
 		ATH5K_DBG(sc, ATH5K_DEBUG_RESET,
 			  "TX queues stuck, resetting\n");
-		ath5k_reset(sc, sc->curchan);
+		ath5k_reset(sc, NULL, true);
 	}
 
 	ieee80211_queue_delayed_work(sc->hw, &sc->tx_complete_work,
@@ -2383,10 +2362,9 @@ ath5k_stop_locked(struct ath5k_softc *sc)
 		ath5k_led_off(sc);
 		ath5k_hw_set_imr(ah, 0);
 		synchronize_irq(sc->pdev->irq);
-	}
-	ath5k_txq_cleanup(sc);
-	if (!test_bit(ATH_STAT_INVALID, sc->status)) {
 		ath5k_rx_stop(sc);
+		ath5k_hw_dma_stop(ah);
+		ath5k_drain_tx_buffs(sc);
 		ath5k_hw_phy_disable(ah);
 	}
 
@@ -2423,7 +2401,7 @@ ath5k_init(struct ath5k_softc *sc)
 		AR5K_INT_RXORN | AR5K_INT_TXDESC | AR5K_INT_TXEOL |
 		AR5K_INT_FATAL | AR5K_INT_GLOBAL | AR5K_INT_MIB;
 
-	ret = ath5k_reset(sc, NULL);
+	ret = ath5k_reset(sc, NULL, false);
 	if (ret)
 		goto done;
 
@@ -2436,7 +2414,9 @@ ath5k_init(struct ath5k_softc *sc)
 	for (i = 0; i < common->keymax; i++)
 		ath_hw_keyreset(common, (u16) i);
 
-	ath5k_hw_set_ack_bitrate_high(ah, true);
+	/* Use higher rates for acks instead of base
+	 * rate */
+	ah->ah_ack_bitrate_high = true;
 
 	for (i = 0; i < ARRAY_SIZE(sc->bslot); i++)
 		sc->bslot[i] = NULL;
@@ -2520,7 +2500,8 @@ ath5k_stop_hw(struct ath5k_softc *sc)
  * This should be called with sc->lock.
  */
 static int
-ath5k_reset(struct ath5k_softc *sc, struct ieee80211_channel *chan)
+ath5k_reset(struct ath5k_softc *sc, struct ieee80211_channel *chan,
+							bool skip_pcu)
 {
 	struct ath5k_hw *ah = sc->ah;
 	int ret;
@@ -2532,13 +2513,13 @@ ath5k_reset(struct ath5k_softc *sc, struct ieee80211_channel *chan)
 	stop_tasklets(sc);
 
 	if (chan) {
-		ath5k_txq_cleanup(sc);
-		ath5k_rx_stop(sc);
+		ath5k_drain_tx_buffs(sc);
 
 		sc->curchan = chan;
 		sc->curband = &sc->sbands[chan->band];
 	}
-	ret = ath5k_hw_reset(ah, sc->opmode, sc->curchan, chan != NULL);
+	ret = ath5k_hw_reset(ah, sc->opmode, sc->curchan, chan != NULL,
+								skip_pcu);
 	if (ret) {
 		ATH5K_ERR(sc, "can't reset hardware (%d)\n", ret);
 		goto err;
@@ -2584,7 +2565,7 @@ static void ath5k_reset_work(struct work_struct *work)
 		reset_work);
 
 	mutex_lock(&sc->lock);
-	ath5k_reset(sc, sc->curchan);
+	ath5k_reset(sc, NULL, true);
 	mutex_unlock(&sc->lock);
 }
 

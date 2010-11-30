@@ -787,6 +787,7 @@
 #define	AR5K_DCU_GBL_IFS_MISC_LFSR_SLICE	0x00000007	/* LFSR Slice Select */
 #define	AR5K_DCU_GBL_IFS_MISC_TURBO_MODE	0x00000008	/* Turbo mode */
 #define	AR5K_DCU_GBL_IFS_MISC_SIFS_DUR_USEC	0x000003f0	/* SIFS Duration mask */
+#define	AR5K_DCU_GBL_IFS_MISC_SIFS_DUR_USEC_S	4
 #define	AR5K_DCU_GBL_IFS_MISC_USEC_DUR		0x000ffc00	/* USEC Duration mask */
 #define	AR5K_DCU_GBL_IFS_MISC_USEC_DUR_S	10
 #define	AR5K_DCU_GBL_IFS_MISC_DCU_ARB_DELAY	0x00300000	/* DCU Arbiter delay mask */
@@ -1311,7 +1312,7 @@
 #define AR5K_IFS1_EIFS		0x03fff000
 #define AR5K_IFS1_EIFS_S	12
 #define AR5K_IFS1_CS_EN		0x04000000
-
+#define AR5K_IFS1_CS_EN_S	26
 
 /*
  * CFP duration register
@@ -2058,6 +2059,7 @@
 
 #define AR5K_PHY_SCAL			0x9878
 #define AR5K_PHY_SCAL_32MHZ		0x0000000e
+#define	AR5K_PHY_SCAL_32MHZ_5311	0x00000008
 #define	AR5K_PHY_SCAL_32MHZ_2417	0x0000000a
 #define	AR5K_PHY_SCAL_32MHZ_HB63	0x00000032
 
@@ -2244,6 +2246,8 @@
 #define	AR5K_PHY_FRAME_CTL		(ah->ah_version == AR5K_AR5210 ? \
 					AR5K_PHY_FRAME_CTL_5210 : AR5K_PHY_FRAME_CTL_5211)
 /*---[5111+]---*/
+#define	AR5K_PHY_FRAME_CTL_WIN_LEN	0x00000003	/* Force window length (?) */
+#define	AR5K_PHY_FRAME_CTL_WIN_LEN_S	0
 #define	AR5K_PHY_FRAME_CTL_TX_CLIP	0x00000038	/* Mask for tx clip (?) */
 #define	AR5K_PHY_FRAME_CTL_TX_CLIP_S	3
 #define	AR5K_PHY_FRAME_CTL_PREP_CHINFO	0x00010000	/* Prepend chan info */
