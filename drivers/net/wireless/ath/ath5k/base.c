@@ -2341,8 +2341,9 @@ ath5k_init_softc(struct ath5k_softc *sc, const struct ath_bus_ops *bus_ops)
 	/* Initialize driver private data */
 	SET_IEEE80211_DEV(hw, sc->dev);
 	hw->flags = IEEE80211_HW_RX_INCLUDES_FCS |
-		    IEEE80211_HW_HOST_BROADCAST_PS_BUFFERING |
-		    IEEE80211_HW_SIGNAL_DBM;
+			IEEE80211_HW_HOST_BROADCAST_PS_BUFFERING |
+			IEEE80211_HW_SIGNAL_DBM |
+			IEEE80211_HW_REPORTS_TX_ACK_STATUS;
 
 	hw->wiphy->interface_modes =
 		BIT(NL80211_IFTYPE_AP) |
@@ -2653,7 +2654,7 @@ ath5k_reset(struct ath5k_softc *sc, struct ieee80211_channel *chan,
 							bool skip_pcu)
 {
 	struct ath5k_hw *ah = sc->ah;
-	int ret;
+	int ret, ani_mode;
 
 	ATH5K_DBG(sc, ATH5K_DEBUG_RESET, "resetting\n");
 
@@ -2661,9 +2662,17 @@ ath5k_reset(struct ath5k_softc *sc, struct ieee80211_channel *chan,
 	synchronize_irq(sc->irq);
 	stop_tasklets(sc);
 
-	if (chan) {
-		ath5k_drain_tx_buffs(sc);
+	/* Save ani mode and disable ANI durring
+	 * reset. If we don't we might get false
+	 * PHY error interrupts. */
+	ani_mode = ah->ah_sc->ani_state.ani_mode;
+	ath5k_ani_init(ah, ATH5K_ANI_MODE_OFF);
 
+	/* We are going to empty hw queues
+	 * so we should also free any remaining
+	 * tx buffers */
+	ath5k_drain_tx_buffs(sc);
+	if (chan) {
 		sc->curchan = chan;
 		sc->curband = &sc->sbands[chan->band];
 	}
@@ -2680,12 +2689,12 @@ ath5k_reset(struct ath5k_softc *sc, struct ieee80211_channel *chan,
 		goto err;
 	}
 
-	ath5k_ani_init(ah, ah->ah_sc->ani_state.ani_mode);
+	ath5k_ani_init(ah, ani_mode);
 
 	ah->ah_cal_next_full = jiffies;
 	ah->ah_cal_next_ani = jiffies;
 	ah->ah_cal_next_nf = jiffies;
-	ewma_init(&ah->ah_beacon_rssi_avg, 1000, 8);
+	ewma_init(&ah->ah_beacon_rssi_avg, 1024, 8);
 
 	/*
 	 * Change channels and update the h/w rate map if we're switching;
