@@ -72,7 +72,7 @@ static const struct ar9300_eeprom ar9300_default = {
 		.regDmn = { LE16(0), LE16(0x1f) },
 		.txrxMask =  0x77, /* 4 bits tx and 4 bits rx */
 		.opCapFlags = {
-			.opFlags = AR9300_OPFLAGS_11G | AR9300_OPFLAGS_11A,
+			.opFlags = AR5416_OPFLAGS_11G | AR5416_OPFLAGS_11A,
 			.eepMisc = 0,
 		},
 		.rfSilent = 0,
@@ -649,7 +649,7 @@ static const struct ar9300_eeprom ar9300_x113 = {
 		.regDmn = { LE16(0), LE16(0x1f) },
 		.txrxMask =  0x77, /* 4 bits tx and 4 bits rx */
 		.opCapFlags = {
-			.opFlags = AR9300_OPFLAGS_11G | AR9300_OPFLAGS_11A,
+			.opFlags = AR5416_OPFLAGS_11G | AR5416_OPFLAGS_11A,
 			.eepMisc = 0,
 		},
 		.rfSilent = 0,
@@ -1227,7 +1227,7 @@ static const struct ar9300_eeprom ar9300_h112 = {
 		.regDmn = { LE16(0), LE16(0x1f) },
 		.txrxMask =  0x77, /* 4 bits tx and 4 bits rx */
 		.opCapFlags = {
-			.opFlags = AR9300_OPFLAGS_11G | AR9300_OPFLAGS_11A,
+			.opFlags = AR5416_OPFLAGS_11G | AR5416_OPFLAGS_11A,
 			.eepMisc = 0,
 		},
 		.rfSilent = 0,
@@ -1805,7 +1805,7 @@ static const struct ar9300_eeprom ar9300_x112 = {
 		.regDmn = { LE16(0), LE16(0x1f) },
 		.txrxMask =  0x77, /* 4 bits tx and 4 bits rx */
 		.opCapFlags = {
-			.opFlags = AR9300_OPFLAGS_11G | AR9300_OPFLAGS_11A,
+			.opFlags = AR5416_OPFLAGS_11G | AR5416_OPFLAGS_11A,
 			.eepMisc = 0,
 		},
 		.rfSilent = 0,
@@ -2382,7 +2382,7 @@ static const struct ar9300_eeprom ar9300_h116 = {
 		.regDmn = { LE16(0), LE16(0x1f) },
 		.txrxMask =  0x33, /* 4 bits tx and 4 bits rx */
 		.opCapFlags = {
-			.opFlags = AR9300_OPFLAGS_11G | AR9300_OPFLAGS_11A,
+			.opFlags = AR5416_OPFLAGS_11G | AR5416_OPFLAGS_11A,
 			.eepMisc = 0,
 		},
 		.rfSilent = 0,
@@ -2974,7 +2974,7 @@ static const struct ar9300_eeprom *ar9003_eeprom_struct_find_by_id(int id)
 
 static u16 ath9k_hw_fbin2freq(u8 fbin, bool is2GHz)
 {
-	if (fbin == AR9300_BCHAN_UNUSED)
+	if (fbin == AR5416_BCHAN_UNUSED)
 		return fbin;
 
 	return (u16) ((is2GHz) ? (2300 + fbin) : (4800 + 5 * fbin));
@@ -3425,18 +3425,6 @@ static int ath9k_hw_ar9300_get_eeprom_ver(struct ath_hw *ah)
 static int ath9k_hw_ar9300_get_eeprom_rev(struct ath_hw *ah)
 {
 	return 0;
-}
-
-static u8 ath9k_hw_ar9300_get_num_ant_config(struct ath_hw *ah,
-					     enum ath9k_hal_freq_band freq_band)
-{
-	return 1;
-}
-
-static u32 ath9k_hw_ar9300_get_eeprom_antenna_cfg(struct ath_hw *ah,
-						  struct ath9k_channel *chan)
-{
-	return -EINVAL;
 }
 
 static s32 ar9003_hw_xpa_bias_level_get(struct ath_hw *ah, bool is2ghz)
@@ -4485,7 +4473,7 @@ static u16 ar9003_hw_get_indirect_edge_power(struct ar9300_eeprom *eep,
 			return CTL_EDGE_TPOWER(ctl_5g[idx].ctlEdges[edge - 1]);
 	}
 
-	return AR9300_MAX_RATE_POWER;
+	return MAX_RATE_POWER;
 }
 
 /*
@@ -4494,7 +4482,7 @@ static u16 ar9003_hw_get_indirect_edge_power(struct ar9300_eeprom *eep,
 static u16 ar9003_hw_get_max_edge_power(struct ar9300_eeprom *eep,
 					u16 freq, int idx, bool is2GHz)
 {
-	u16 twiceMaxEdgePower = AR9300_MAX_RATE_POWER;
+	u16 twiceMaxEdgePower = MAX_RATE_POWER;
 	u8 *ctl_freqbin = is2GHz ?
 		&eep->ctl_freqbin_2G[idx][0] :
 		&eep->ctl_freqbin_5G[idx][0];
@@ -4504,7 +4492,7 @@ static u16 ar9003_hw_get_max_edge_power(struct ar9300_eeprom *eep,
 
 	/* Get the edge power */
 	for (edge = 0;
-	     (edge < num_edges) && (ctl_freqbin[edge] != AR9300_BCHAN_UNUSED);
+	     (edge < num_edges) && (ctl_freqbin[edge] != AR5416_BCHAN_UNUSED);
 	     edge++) {
 		/*
 		 * If there's an exact channel match or an inband flag set
@@ -4542,9 +4530,9 @@ static void ar9003_hw_set_power_per_rate_table(struct ath_hw *ah,
 	struct ath_regulatory *regulatory = ath9k_hw_regulatory(ah);
 	struct ath_common *common = ath9k_hw_common(ah);
 	struct ar9300_eeprom *pEepData = &ah->eeprom.ar9300_eep;
-	u16 twiceMaxEdgePower = AR9300_MAX_RATE_POWER;
+	u16 twiceMaxEdgePower = MAX_RATE_POWER;
 	static const u16 tpScaleReductionTable[5] = {
-		0, 3, 6, 9, AR9300_MAX_RATE_POWER
+		0, 3, 6, 9, MAX_RATE_POWER
 	};
 	int i;
 	int16_t  twiceLargestAntenna;
@@ -4810,6 +4798,19 @@ static void ath9k_hw_ar9300_set_txpower(struct ath_hw *ah,
 	/* Write target power array to registers */
 	ar9003_hw_tx_power_regwrite(ah, targetPowerValT2);
 	ar9003_hw_calibration_apply(ah, chan->channel);
+
+	if (IS_CHAN_2GHZ(chan)) {
+		if (IS_CHAN_HT40(chan))
+			i = ALL_TARGET_HT40_0_8_16;
+		else
+			i = ALL_TARGET_HT20_0_8_16;
+	} else {
+		if (IS_CHAN_HT40(chan))
+			i = ALL_TARGET_HT40_7;
+		else
+			i = ALL_TARGET_HT20_7;
+	}
+	ah->paprd_target_power = targetPowerValT2[i];
 }
 
 static u16 ath9k_hw_ar9300_get_spur_channel(struct ath_hw *ah,
@@ -4848,8 +4849,6 @@ const struct eeprom_ops eep_ar9300_ops = {
 	.fill_eeprom = ath9k_hw_ar9300_fill_eeprom,
 	.get_eeprom_ver = ath9k_hw_ar9300_get_eeprom_ver,
 	.get_eeprom_rev = ath9k_hw_ar9300_get_eeprom_rev,
-	.get_num_ant_config = ath9k_hw_ar9300_get_num_ant_config,
-	.get_eeprom_antenna_cfg = ath9k_hw_ar9300_get_eeprom_antenna_cfg,
 	.set_board_values = ath9k_hw_ar9300_set_board_values,
 	.set_addac = ath9k_hw_ar9300_set_addac,
 	.set_txpower = ath9k_hw_ar9300_set_txpower,
