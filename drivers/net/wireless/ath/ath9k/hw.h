@@ -835,6 +835,8 @@ struct ath_hw {
 
 	unsigned int paprd_target_power;
 	unsigned int paprd_training_power;
+	unsigned int paprd_ratemask;
+	bool paprd_table_write_done;
 	u32 paprd_gain_table_entries[PAPRD_GAIN_TABLE_ENTRIES];
 	u8 paprd_gain_table_index[PAPRD_GAIN_TABLE_ENTRIES];
 	/*
@@ -866,6 +868,11 @@ static inline struct ath_hw_private_ops *ath9k_hw_private_ops(struct ath_hw *ah)
 static inline struct ath_hw_ops *ath9k_hw_ops(struct ath_hw *ah)
 {
 	return &ah->ops;
+}
+
+static inline u8 get_streams(int mask)
+{
+	return !!(mask & BIT(0)) + !!(mask & BIT(1)) + !!(mask & BIT(2));
 }
 
 /* Initialization, Detach, Reset */
