@@ -576,7 +576,6 @@ struct ath_hw_private_ops {
 	void (*set_delta_slope)(struct ath_hw *ah, struct ath9k_channel *chan);
 	bool (*rfbus_req)(struct ath_hw *ah);
 	void (*rfbus_done)(struct ath_hw *ah);
-	void (*enable_rfkill)(struct ath_hw *ah);
 	void (*restore_chainmask)(struct ath_hw *ah);
 	void (*set_diversity)(struct ath_hw *ah, bool value);
 	u32 (*compute_pll_control)(struct ath_hw *ah,
@@ -836,6 +835,7 @@ struct ath_hw {
 	unsigned int paprd_target_power;
 	unsigned int paprd_training_power;
 	unsigned int paprd_ratemask;
+	unsigned int paprd_ratemask_ht40;
 	bool paprd_table_write_done;
 	u32 paprd_gain_table_entries[PAPRD_GAIN_TABLE_ENTRIES];
 	u8 paprd_gain_table_index[PAPRD_GAIN_TABLE_ENTRIES];

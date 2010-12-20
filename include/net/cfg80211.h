@@ -649,12 +649,20 @@ struct mesh_config {
  * struct mesh_setup - 802.11s mesh setup configuration
  * @mesh_id: the mesh ID
  * @mesh_id_len: length of the mesh ID, at least 1 and at most 32 bytes
+ * @path_sel_proto: which path selection protocol to use
+ * @path_metric: which metric to use
+ * @vendor_ie: vendor information elements (optional)
+ * @vendor_ie_len: length of vendor information elements
  *
  * These parameters are fixed when the mesh is created.
  */
 struct mesh_setup {
 	const u8 *mesh_id;
 	u8 mesh_id_len;
+	u8  path_sel_proto;
+	u8  path_metric;
+	const u8 *vendor_ie;
+	u8 vendor_ie_len;
 };
 
 /**
@@ -1096,9 +1104,9 @@ struct cfg80211_pmksa {
  * @get_mpath: get a mesh path for the given parameters
  * @dump_mpath: dump mesh path callback -- resume dump at index @idx
  *
- * @get_mesh_params: Put the current mesh parameters into *params
+ * @get_mesh_config: Get the current mesh configuration
  *
- * @update_mesh_params: Update mesh parameters on a running mesh.
+ * @update_mesh_config: Update mesh parameters on a running mesh.
  *	The mask is a bitfield which tells us which parameters to
  *	set, and which to leave alone.
  *
@@ -1246,10 +1254,10 @@ struct cfg80211_ops {
 	int	(*dump_mpath)(struct wiphy *wiphy, struct net_device *dev,
 			       int idx, u8 *dst, u8 *next_hop,
 			       struct mpath_info *pinfo);
-	int	(*get_mesh_params)(struct wiphy *wiphy,
+	int	(*get_mesh_config)(struct wiphy *wiphy,
 				struct net_device *dev,
 				struct mesh_config *conf);
-	int	(*update_mesh_params)(struct wiphy *wiphy,
+	int	(*update_mesh_config)(struct wiphy *wiphy,
 				      struct net_device *dev, u32 mask,
 				      const struct mesh_config *nconf);
 	int	(*join_mesh)(struct wiphy *wiphy, struct net_device *dev,
@@ -1474,8 +1482,13 @@ struct ieee80211_txrx_stypes {
  *	transmitted through nl80211, points to an array indexed by interface
  *	type
  *
- * @available_antennas: bitmap of antennas which are available to configure.
- *	antenna configuration commands will be rejected unless this is set.
+ * @available_antennas_tx: bitmap of antennas which are available to be
+ *	configured as TX antennas. Antenna configuration commands will be
+ *	rejected unless this or @available_antennas_rx is set.
+ *
+ * @available_antennas_rx: bitmap of antennas which are available to be
+ *	configured as RX antennas. Antenna configuration commands will be
+ *	rejected unless this or @available_antennas_tx is set.
  *
  * @max_remain_on_channel_duration: Maximum time a remain-on-channel operation
  *	may request, if implemented.
@@ -1520,7 +1533,8 @@ struct wiphy {
 
 	u8 max_num_pmkids;
 
-	u32 available_antennas;
+	u32 available_antennas_tx;
+	u32 available_antennas_rx;
 
 	/* If multiple wiphys are registered and you're handed e.g.
 	 * a regular netdev with assigned ieee80211_ptr, you won't

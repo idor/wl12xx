@@ -225,7 +225,7 @@ static void _rtl_init_deferred_work(struct ieee80211_hw *hw)
 
 	/* <2> work queue */
 	rtlpriv->works.hw = hw;
-	rtlpriv->works.rtl_wq = create_workqueue(rtlpriv->cfg->name);
+	rtlpriv->works.rtl_wq = alloc_workqueue(rtlpriv->cfg->name, 0, 0);
 	INIT_DELAYED_WORK(&rtlpriv->works.watchdog_wq,
 			  (void *)rtl_watchdog_wq_callback);
 	INIT_DELAYED_WORK(&rtlpriv->works.ips_nic_off_wq,
@@ -309,8 +309,8 @@ int rtl_init_core(struct ieee80211_hw *hw)
 	}
 
 	/* <4> locks */
-	mutex_init(&rtlpriv->locks.ips_mutex);
 	mutex_init(&rtlpriv->locks.conf_mutex);
+	spin_lock_init(&rtlpriv->locks.ips_lock);
 	spin_lock_init(&rtlpriv->locks.irq_th_lock);
 	spin_lock_init(&rtlpriv->locks.h2c_lock);
 	spin_lock_init(&rtlpriv->locks.rf_ps_lock);
