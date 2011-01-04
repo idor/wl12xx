@@ -45,6 +45,7 @@ int ath9k_pm_qos_value = ATH9K_PM_QOS_DEFAULT_VALUE;
 module_param_named(pmqos, ath9k_pm_qos_value, int, S_IRUSR | S_IRGRP | S_IROTH);
 MODULE_PARM_DESC(pmqos, "User specified PM-QOS value");
 
+bool is_ath9k_unloaded;
 /* We use the hw_value as an index into our private channel structure */
 
 #define CHAN2G(_freq, _idx)  { \
@@ -372,7 +373,7 @@ fail:
 #undef DS2PHYS
 }
 
-static void ath9k_init_crypto(struct ath_softc *sc)
+void ath9k_init_crypto(struct ath_softc *sc)
 {
 	struct ath_common *common = ath9k_hw_common(sc->sc_ah);
 	int i = 0;
@@ -899,6 +900,7 @@ module_init(ath9k_init);
 
 static void __exit ath9k_exit(void)
 {
+	is_ath9k_unloaded = true;
 	ath_ahb_exit();
 	ath_pci_exit();
 	ath_rate_control_unregister();
