@@ -28,6 +28,7 @@
 #include "boot.h"
 #include "io.h"
 #include "event.h"
+#include "rx.h"
 
 static struct wl1271_partition_set part_table[PART_TABLE_LEN] = {
 	[PART_DOWN] = {
@@ -231,7 +232,9 @@ static int wl1271_boot_upload_nvs(struct wl1271 *wl)
 	 */
 	if (wl->nvs_len == sizeof(struct wl1271_nvs_file) ||
 	    wl->nvs_len == WL1271_INI_LEGACY_NVS_FILE_SIZE) {
-		if (wl->nvs->general_params.dual_mode_select)
+		/* for now 11a is unsupported in AP mode */
+		if (wl->bss_type != BSS_TYPE_AP_BSS &&
+		    wl->nvs->general_params.dual_mode_select)
 			wl->enable_11a = true;
 	}
 
@@ -431,6 +434,9 @@ static int wl1271_boot_run_firmware(struct wl1271 *wl)
 		PSPOLL_DELIVERY_FAILURE_EVENT_ID |
 		SOFT_GEMINI_SENSE_EVENT_ID;
 
+	if (wl->bss_type == BSS_TYPE_AP_BSS)
+		wl->event_mask |= STA_REMOVE_COMPLETE_EVENT_ID;
+
 	ret = wl1271_event_unmask(wl);
 	if (ret < 0) {
 		wl1271_error("EVENT mask setting failed");
@@ -595,8 +601,7 @@ int wl1271_boot(struct wl1271 *wl)
 	wl1271_boot_enable_interrupts(wl);
 
 	/* set the wl1271 default filters */
-	wl->rx_config = WL1271_DEFAULT_RX_CONFIG;
-	wl->rx_filter = WL1271_DEFAULT_RX_FILTER;
+	wl1271_set_default_filters(wl);
 
 	wl1271_event_mbox_config(wl);
 
