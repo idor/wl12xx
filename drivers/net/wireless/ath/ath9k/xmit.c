@@ -169,7 +169,7 @@ static void ath_tx_flush_tid(struct ath_softc *sc, struct ath_atx_tid *tid)
 			ath_tx_update_baw(sc, tid, fi->seqno);
 			ath_tx_complete_buf(sc, bf, txq, &bf_head, &ts, 0, 0);
 		} else {
-			ath_tx_send_normal(sc, txq, tid, &bf_head);
+			ath_tx_send_normal(sc, txq, NULL, &bf_head);
 		}
 		spin_lock_bh(&txq->axq_lock);
 	}
@@ -429,7 +429,7 @@ static void ath_tx_complete_aggr(struct ath_softc *sc, struct ath_txq *txq,
 
 	ath_tx_count_frames(sc, bf, ts, txok, &nframes, &nbad);
 	while (bf) {
-		txfail = txpending = 0;
+		txfail = txpending = sendbar = 0;
 		bf_next = bf->bf_next;
 
 		skb = bf->bf_mpdu;
@@ -856,7 +856,10 @@ int ath_tx_aggr_start(struct ath_softc *sc, struct ieee80211_sta *sta,
 
 	txtid->state |= AGGR_ADDBA_PROGRESS;
 	txtid->paused = true;
-	*ssn = txtid->seq_start;
+	*ssn = txtid->seq_start = txtid->seq_next;
+
+	memset(txtid->tx_buf, 0, sizeof(txtid->tx_buf));
+	txtid->baw_head = txtid->baw_tail = 0;
 
 	return 0;
 }
@@ -1221,12 +1224,14 @@ void ath_tx_cleanupq(struct ath_softc *sc, struct ath_txq *txq)
 void ath_txq_schedule(struct ath_softc *sc, struct ath_txq *txq)
 {
 	struct ath_atx_ac *ac;
-	struct ath_atx_tid *tid;
+	struct ath_atx_tid *tid, *last;
 
-	if (list_empty(&txq->axq_acq))
+	if (list_empty(&txq->axq_acq) ||
+	    txq->axq_ampdu_depth >= ATH_AGGR_MIN_QDEPTH)
 		return;
 
 	ac = list_first_entry(&txq->axq_acq, struct ath_atx_ac, list);
+	last = list_entry(ac->tid_q.prev, struct ath_atx_tid, list);
 	list_del(&ac->list);
 	ac->sched = false;
 
@@ -1250,7 +1255,8 @@ void ath_txq_schedule(struct ath_softc *sc, struct ath_txq *txq)
 		if (!list_empty(&tid->buf_q))
 			ath_tx_queue_tid(txq, tid);
 
-		break;
+		if (tid == last || txq->axq_ampdu_depth >= ATH_AGGR_MIN_QDEPTH)
+			break;
 	} while (!list_empty(&ac->tid_q));
 
 	if (!list_empty(&ac->tid_q)) {
