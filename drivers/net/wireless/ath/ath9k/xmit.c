@@ -19,7 +19,6 @@
 
 #define BITS_PER_BYTE           8
 #define OFDM_PLCP_BITS          22
-#define HT_RC_2_MCS(_rc)        ((_rc) & 0x1f)
 #define HT_RC_2_STREAMS(_rc)    ((((_rc) & 0x78) >> 3) + 1)
 #define L_STF                   8
 #define L_LTF                   8
@@ -32,7 +31,6 @@
 #define NUM_SYMBOLS_PER_USEC(_usec) (_usec >> 2)
 #define NUM_SYMBOLS_PER_USEC_HALFGI(_usec) (((_usec*5)-4)/18)
 
-#define OFDM_SIFS_TIME    	    16
 
 static u16 bits_per_symbol[][2] = {
 	/* 20MHz 40MHz */
@@ -1318,6 +1316,7 @@ static void ath_tx_txqaddbuf(struct ath_softc *sc, struct ath_txq *txq,
 		INIT_LIST_HEAD(&txq->txq_fifo[txq->txq_headidx]);
 		list_splice_init(head, &txq->txq_fifo[txq->txq_headidx]);
 		INCR(txq->txq_headidx, ATH_TXFIFO_DEPTH);
+		TX_STAT_INC(txq->axq_qnum, puttxbuf);
 		ath9k_hw_puttxbuf(ah, txq->axq_qnum, bf->bf_daddr);
 		ath_dbg(common, ATH_DBG_XMIT, "TXDP[%u] = %llx (%p)\n",
 			txq->axq_qnum, ito64(bf->bf_daddr), bf->bf_desc);
@@ -1325,6 +1324,7 @@ static void ath_tx_txqaddbuf(struct ath_softc *sc, struct ath_txq *txq,
 		list_splice_tail_init(head, &txq->axq_q);
 
 		if (txq->axq_link == NULL) {
+			TX_STAT_INC(txq->axq_qnum, puttxbuf);
 			ath9k_hw_puttxbuf(ah, txq->axq_qnum, bf->bf_daddr);
 			ath_dbg(common, ATH_DBG_XMIT, "TXDP[%u] = %llx (%p)\n",
 				txq->axq_qnum, ito64(bf->bf_daddr),
@@ -1338,6 +1338,7 @@ static void ath_tx_txqaddbuf(struct ath_softc *sc, struct ath_txq *txq,
 		}
 		ath9k_hw_get_desc_link(ah, bf->bf_lastbf->bf_desc,
 				       &txq->axq_link);
+		TX_STAT_INC(txq->axq_qnum, txstart);
 		ath9k_hw_txstart(ah, txq->axq_qnum);
 	}
 	txq->axq_depth++;
