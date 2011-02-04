@@ -325,7 +325,6 @@ static bool ath_paprd_send_frame(struct ath_softc *sc, struct sk_buff *skb, int 
 	tx_info->control.rates[1].idx = -1;
 
 	init_completion(&sc->paprd_complete);
-	sc->paprd_pending = true;
 	txctl.paprd = BIT(chain);
 
 	if (ath_tx_start(hw, skb, &txctl) != 0) {
@@ -336,7 +335,6 @@ static bool ath_paprd_send_frame(struct ath_softc *sc, struct sk_buff *skb, int 
 
 	time_left = wait_for_completion_timeout(&sc->paprd_complete,
 			msecs_to_jiffies(ATH_PAPRD_TIMEOUT));
-	sc->paprd_pending = false;
 
 	if (!time_left)
 		ath_dbg(ath9k_hw_common(sc->sc_ah), ATH_DBG_CALIBRATE,
