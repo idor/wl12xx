@@ -257,7 +257,8 @@ ieee80211_tx_h_check_assoc(struct ieee80211_tx_data *tx)
 	if (unlikely(info->flags & IEEE80211_TX_CTL_INJECTED))
 		return TX_CONTINUE;
 
-	if (unlikely(test_bit(SCAN_OFF_CHANNEL, &tx->local->scanning)) &&
+	if (unlikely(test_bit(SCAN_SW_SCANNING, &tx->local->scanning)) &&
+	    test_bit(SDATA_STATE_OFFCHANNEL, &tx->sdata->state) &&
 	    !ieee80211_is_probe_req(hdr->frame_control) &&
 	    !ieee80211_is_nullfunc(hdr->frame_control))
 		/*
@@ -2179,6 +2180,8 @@ static void ieee80211_beacon_add_tim(struct ieee80211_if_ap *bss,
 	if (bss->dtim_count == 0 && !skb_queue_empty(&bss->ps_bc_buf))
 		aid0 = 1;
 
+	bss->dtim_bc_mc = aid0 == 1;
+
 	if (have_bits) {
 		/* Find largest even number N1 so that bits numbered 1 through
 		 * (N1 x 8) - 1 in the bitmap are 0 and number N2 so that bits
@@ -2549,7 +2552,7 @@ ieee80211_get_buffered_bc(struct ieee80211_hw *hw,
 	if (sdata->vif.type != NL80211_IFTYPE_AP || !beacon || !beacon->head)
 		goto out;
 
-	if (bss->dtim_count != 0)
+	if (bss->dtim_count != 0 || !bss->dtim_bc_mc)
 		goto out; /* send buffered bc/mc only after DTIM beacon */
 
 	while (1) {

@@ -409,15 +409,9 @@ ieee80211_rx_h_passive_scan(struct ieee80211_rx_data *rx)
 	if (likely(!(status->rx_flags & IEEE80211_RX_IN_SCAN)))
 		return RX_CONTINUE;
 
-	if (test_bit(SCAN_HW_SCANNING, &local->scanning))
+	if (test_bit(SCAN_HW_SCANNING, &local->scanning) ||
+	    test_bit(SCAN_SW_SCANNING, &local->scanning))
 		return ieee80211_scan_rx(rx->sdata, skb);
-
-	if (test_bit(SCAN_SW_SCANNING, &local->scanning)) {
-		/* drop all the other packets during a software scan anyway */
-		if (ieee80211_scan_rx(rx->sdata, skb) != RX_QUEUED)
-			dev_kfree_skb(skb);
-		return RX_QUEUED;
-	}
 
 	/* scanning finished during invoking of handlers */
 	I802_DEBUG_INC(local->rx_handlers_drop_passive_scan);
@@ -815,7 +809,7 @@ ieee80211_rx_h_check(struct ieee80211_rx_data *rx)
 				rx->local->dot11FrameDuplicateCount++;
 				rx->sta->num_duplicates++;
 			}
-			return RX_DROP_MONITOR;
+			return RX_DROP_UNUSABLE;
 		} else
 			rx->sta->last_seq_ctrl[rx->queue] = hdr->seq_ctrl;
 	}
@@ -1952,7 +1946,10 @@ ieee80211_rx_h_data(struct ieee80211_rx_data *rx)
 	dev->stats.rx_bytes += rx->skb->len;
 
 	if (local->ps_sdata && local->hw.conf.dynamic_ps_timeout > 0 &&
-	    !is_multicast_ether_addr(((struct ethhdr *)rx->skb->data)->h_dest)) {
+	    !is_multicast_ether_addr(
+		    ((struct ethhdr *)rx->skb->data)->h_dest) &&
+	    (!local->scanning &&
+	     !test_bit(SDATA_STATE_OFFCHANNEL, &sdata->state))) {
 			mod_timer(&local->dynamic_ps_timer, jiffies +
 			 msecs_to_jiffies(local->hw.conf.dynamic_ps_timeout));
 	}
@@ -2790,7 +2787,7 @@ static void __ieee80211_rx_handle_packet(struct ieee80211_hw *hw,
 		local->dot11ReceivedFragmentCount++;
 
 	if (unlikely(test_bit(SCAN_HW_SCANNING, &local->scanning) ||
-		     test_bit(SCAN_OFF_CHANNEL, &local->scanning)))
+		     test_bit(SCAN_SW_SCANNING, &local->scanning)))
 		status->rx_flags |= IEEE80211_RX_IN_SCAN;
 
 	if (ieee80211_is_mgmt(fc))
