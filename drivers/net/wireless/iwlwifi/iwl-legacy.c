@@ -85,10 +85,9 @@ int iwl_legacy_mac_config(struct ieee80211_hw *hw, u32 changed)
 	IWL_DEBUG_MAC80211(priv, "enter to channel %d changed 0x%X\n",
 					channel->hw_value, changed);
 
-	if (unlikely(!priv->cfg->mod_params->disable_hw_scan &&
-			test_bit(STATUS_SCANNING, &priv->status))) {
+	if (unlikely(test_bit(STATUS_SCANNING, &priv->status))) {
 		scan_active = 1;
-		IWL_DEBUG_MAC80211(priv, "leave - scanning\n");
+		IWL_DEBUG_MAC80211(priv, "scan active\n");
 	}
 
 	if (changed & (IEEE80211_CONF_CHANGE_SMPS |
@@ -332,7 +331,6 @@ static inline void iwl_set_no_assoc(struct iwl_priv *priv,
 {
 	struct iwl_rxon_context *ctx = iwl_rxon_ctx_from_vif(vif);
 
-	iwl_led_disassociate(priv);
 	/*
 	 * inform the ucode that there is no longer an
 	 * association and that no more packets should be
@@ -520,8 +518,6 @@ void iwl_legacy_mac_bss_info_changed(struct ieee80211_hw *hw,
 		if (bss_conf->assoc) {
 			priv->timestamp = bss_conf->timestamp;
 
-			iwl_led_associate(priv);
-
 			if (!iwl_is_rfkill(priv))
 				priv->cfg->ops->legacy->post_associate(priv);
 		} else
@@ -545,7 +541,6 @@ void iwl_legacy_mac_bss_info_changed(struct ieee80211_hw *hw,
 			memcpy(ctx->staging.bssid_addr,
 			       bss_conf->bssid, ETH_ALEN);
 			memcpy(priv->bssid, bss_conf->bssid, ETH_ALEN);
-			iwl_led_associate(priv);
 			priv->cfg->ops->legacy->config_ap(priv);
 		} else
 			iwl_set_no_assoc(priv, vif);

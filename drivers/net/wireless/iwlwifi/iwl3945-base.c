@@ -2517,7 +2517,7 @@ static void iwl3945_alive_start(struct iwl_priv *priv)
 
 	ieee80211_wake_queues(priv->hw);
 
-	priv->active_rate = IWL_RATES_MASK;
+	priv->active_rate = IWL_RATES_MASK_3945;
 
 	iwl_power_update_mode(priv, true);
 
@@ -2535,15 +2535,14 @@ static void iwl3945_alive_start(struct iwl_priv *priv)
 	/* Configure Bluetooth device coexistence support */
 	priv->cfg->ops->hcmd->send_bt_config(priv);
 
+	set_bit(STATUS_READY, &priv->status);
+
 	/* Configure the adapter for unassociated operation */
 	iwl3945_commit_rxon(priv, ctx);
 
 	iwl3945_reg_txpower_periodic(priv);
 
-	iwl_leds_init(priv);
-
 	IWL_DEBUG_INFO(priv, "ALIVE processing complete.\n");
-	set_bit(STATUS_READY, &priv->status);
 	wake_up_interruptible(&priv->wait_command_queue);
 
 	return;
@@ -2861,16 +2860,13 @@ int iwl3945_request_scan(struct iwl_priv *priv, struct ieee80211_vif *vif)
 		u32 extra;
 		u32 suspend_time = 100;
 		u32 scan_suspend_time = 100;
-		unsigned long flags;
 
 		IWL_DEBUG_INFO(priv, "Scanning while associated...\n");
 
-		spin_lock_irqsave(&priv->lock, flags);
 		if (priv->is_internal_short_scan)
 			interval = 0;
 		else
 			interval = vif->bss_conf.beacon_int;
-		spin_unlock_irqrestore(&priv->lock, flags);
 
 		scan->suspend_time = 0;
 		scan->max_out_time = cpu_to_le32(200 * 1024);
@@ -3170,8 +3166,6 @@ static int iwl3945_mac_start(struct ieee80211_hw *hw)
 	 * no need to poll the killswitch state anymore */
 	cancel_delayed_work(&priv->_3945.rfkill_poll);
 
-	iwl_led_start(priv);
-
 	priv->is_open = 1;
 	IWL_DEBUG_MAC80211(priv, "leave\n");
 	return 0;
@@ -3288,6 +3282,14 @@ static int iwl3945_mac_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 		IWL_DEBUG_MAC80211(priv, "leave - hwcrypto disabled\n");
 		return -EOPNOTSUPP;
 	}
+
+	/*
+	 * To support IBSS RSN, don't program group keys in IBSS, the
+	 * hardware will then not attempt to decrypt the frames.
+	 */
+	if (vif->type == NL80211_IFTYPE_ADHOC &&
+	    !(key->flags & IEEE80211_KEY_FLAG_PAIRWISE))
+		return -EOPNOTSUPP;
 
 	static_key = !iwl_is_associated(priv, IWL_RXON_CTX_BSS);
 
@@ -3918,7 +3920,8 @@ static int iwl3945_setup_mac(struct iwl_priv *priv)
 		priv->contexts[IWL_RXON_CTX_BSS].interface_modes;
 
 	hw->wiphy->flags |= WIPHY_FLAG_CUSTOM_REGULATORY |
-			    WIPHY_FLAG_DISABLE_BEACON_HINTS;
+			    WIPHY_FLAG_DISABLE_BEACON_HINTS |
+			    WIPHY_FLAG_IBSS_RSN;
 
 	hw->wiphy->max_scan_ssids = PROBE_OPTION_MAX_3945;
 	/* we create the 802.11 header and a zero-length SSID element */
@@ -3934,6 +3937,8 @@ static int iwl3945_setup_mac(struct iwl_priv *priv)
 	if (priv->bands[IEEE80211_BAND_5GHZ].n_channels)
 		priv->hw->wiphy->bands[IEEE80211_BAND_5GHZ] =
 			&priv->bands[IEEE80211_BAND_5GHZ];
+
+	iwl_leds_init(priv);
 
 	ret = ieee80211_register_hw(priv->hw);
 	if (ret) {
@@ -4193,6 +4198,8 @@ static void __devexit iwl3945_pci_remove(struct pci_dev *pdev)
 	iwl_dbgfs_unregister(priv);
 
 	set_bit(STATUS_EXIT_PENDING, &priv->status);
+
+	iwl_leds_exit(priv);
 
 	if (priv->mac80211_registered) {
 		ieee80211_unregister_hw(priv->hw);

@@ -178,7 +178,6 @@ enum {
 	REPLY_BT_COEX_PRIO_TABLE = 0xcc,
 	REPLY_BT_COEX_PROT_ENV = 0xcd,
 	REPLY_BT_COEX_PROFILE_NOTIF = 0xce,
-	REPLY_BT_COEX_SCO = 0xcf,
 
 	/* PAN commands */
 	REPLY_WIPAN_PARAMS = 0xb2,
@@ -3083,6 +3082,13 @@ struct iwl4965_beacon_notif {
 	__le32 ibss_mgr_status;
 } __packed;
 
+struct iwlagn_beacon_notif {
+	struct iwlagn_tx_resp beacon_notify_hdr;
+	__le32 low_tsf;
+	__le32 high_tsf;
+	__le32 ibss_mgr_status;
+} __packed;
+
 /*
  * REPLY_TX_BEACON = 0x91 (command, has simple generic response)
  */
@@ -4369,6 +4375,11 @@ int iwl_agn_check_rxon_cmd(struct iwl_priv *priv);
 /*
  * REPLY_WIPAN_PARAMS = 0xb2 (Commands and Notification)
  */
+
+/*
+ * Minimum slot time in TU
+ */
+#define IWL_MIN_SLOT_TIME	20
 
 /**
  * struct iwl_wipan_slot

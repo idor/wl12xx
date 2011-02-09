@@ -219,16 +219,12 @@ int iwlcore_init_geos(struct iwl_priv *priv)
 		if (!is_channel_valid(ch))
 			continue;
 
-		if (is_channel_a_band(ch))
-			sband =  &priv->bands[IEEE80211_BAND_5GHZ];
-		else
-			sband =  &priv->bands[IEEE80211_BAND_2GHZ];
+		sband =  &priv->bands[ch->band];
 
 		geo_ch = &sband->channels[sband->n_channels++];
 
 		geo_ch->center_freq =
-				ieee80211_channel_to_frequency(ch->channel,
-							       sband->band);
+			ieee80211_channel_to_frequency(ch->channel, ch->band);
 		geo_ch->max_power = ch->max_power_avg;
 		geo_ch->max_antenna_gain = 0xff;
 		geo_ch->hw_value = ch->channel;
@@ -1162,6 +1158,8 @@ int iwl_set_tx_power(struct iwl_priv *priv, s8 tx_power, bool force)
 {
 	int ret;
 	s8 prev_tx_power;
+	bool defer;
+	struct iwl_rxon_context *ctx = &priv->contexts[IWL_RXON_CTX_BSS];
 
 	lockdep_assert_held(&priv->mutex);
 
@@ -1189,10 +1187,15 @@ int iwl_set_tx_power(struct iwl_priv *priv, s8 tx_power, bool force)
 	if (!iwl_is_ready_rf(priv))
 		return -EIO;
 
-	/* scan complete use tx_power_next, need to be updated */
+	/* scan complete and commit_rxon use tx_power_next value,
+	 * it always need to be updated for newest request */
 	priv->tx_power_next = tx_power;
-	if (test_bit(STATUS_SCANNING, &priv->status) && !force) {
-		IWL_DEBUG_INFO(priv, "Deferring tx power set while scanning\n");
+
+	/* do not set tx power when scanning or channel changing */
+	defer = test_bit(STATUS_SCANNING, &priv->status) ||
+		memcmp(&ctx->active, &ctx->staging, sizeof(ctx->staging));
+	if (defer && !force) {
+		IWL_DEBUG_INFO(priv, "Deferring tx power set\n");
 		return 0;
 	}
 
@@ -1404,9 +1407,10 @@ int iwl_mac_add_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 	struct iwl_vif_priv *vif_priv = (void *)vif->drv_priv;
 	struct iwl_rxon_context *tmp, *ctx = NULL;
 	int err;
+	enum nl80211_iftype viftype = ieee80211_vif_type_p2p(vif);
 
 	IWL_DEBUG_MAC80211(priv, "enter: type %d, addr %pM\n",
-			   vif->type, vif->addr);
+			   viftype, vif->addr);
 
 	mutex_lock(&priv->mutex);
 
@@ -1430,7 +1434,7 @@ int iwl_mac_add_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 			continue;
 		}
 
-		if (!(possible_modes & BIT(vif->type)))
+		if (!(possible_modes & BIT(viftype)))
 			continue;
 
 		/* have maybe usable context w/o interface */
@@ -1676,7 +1680,6 @@ void iwl_clear_traffic_stats(struct iwl_priv *priv)
 {
 	memset(&priv->tx_stats, 0, sizeof(struct traffic_stats));
 	memset(&priv->rx_stats, 0, sizeof(struct traffic_stats));
-	priv->led_tpt = 0;
 }
 
 /*
@@ -1769,7 +1772,6 @@ void iwl_update_stats(struct iwl_priv *priv, bool is_tx, __le16 fc, u16 len)
 		stats->data_cnt++;
 		stats->data_bytes += len;
 	}
-	iwl_leds_background(priv);
 }
 EXPORT_SYMBOL(iwl_update_stats);
 #endif
