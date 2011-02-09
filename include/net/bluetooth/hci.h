@@ -76,6 +76,14 @@ enum {
 	HCI_INQUIRY,
 
 	HCI_RAW,
+
+	HCI_SETUP,
+	HCI_AUTO_OFF,
+	HCI_MGMT,
+	HCI_PAIRABLE,
+	HCI_SERVICE_CACHE,
+	HCI_LINK_KEYS,
+	HCI_DEBUG_KEYS,
 };
 
 /* HCI ioctl defines */
@@ -150,6 +158,7 @@ enum {
 #define EDR_ESCO_MASK  (ESCO_2EV3 | ESCO_3EV3 | ESCO_2EV5 | ESCO_3EV5)
 
 /* ACL flags */
+#define ACL_START_NO_FLUSH	0x00
 #define ACL_CONT		0x01
 #define ACL_START		0x02
 #define ACL_ACTIVE_BCAST	0x04
@@ -183,17 +192,25 @@ enum {
 #define LMP_PSCHEME	0x02
 #define LMP_PCONTROL	0x04
 
+#define LMP_RSSI_INQ	0x40
 #define LMP_ESCO	0x80
 
 #define LMP_EV4		0x01
 #define LMP_EV5		0x02
+#define LMP_LE		0x40
 
 #define LMP_SNIFF_SUBR	0x02
+#define LMP_PAUSE_ENC	0x04
 #define LMP_EDR_ESCO_2M	0x20
 #define LMP_EDR_ESCO_3M	0x40
 #define LMP_EDR_3S_ESCO	0x80
 
+#define LMP_EXT_INQ	0x01
 #define LMP_SIMPLE_PAIR	0x08
+#define LMP_NO_FLUSH	0x40
+
+#define LMP_LSTO	0x01
+#define LMP_INQ_TX_PWR	0x02
 
 /* Connection modes */
 #define HCI_CM_ACTIVE	0x0000
@@ -292,9 +309,17 @@ struct hci_cp_pin_code_reply {
 	__u8     pin_len;
 	__u8     pin_code[16];
 } __packed;
+struct hci_rp_pin_code_reply {
+	__u8     status;
+	bdaddr_t bdaddr;
+} __packed;
 
 #define HCI_OP_PIN_CODE_NEG_REPLY	0x040e
 struct hci_cp_pin_code_neg_reply {
+	bdaddr_t bdaddr;
+} __packed;
+struct hci_rp_pin_code_neg_reply {
+	__u8     status;
 	bdaddr_t bdaddr;
 } __packed;
 
@@ -373,6 +398,20 @@ struct hci_cp_accept_sync_conn_req {
 
 #define HCI_OP_REJECT_SYNC_CONN_REQ	0x042a
 struct hci_cp_reject_sync_conn_req {
+	bdaddr_t bdaddr;
+	__u8     reason;
+} __packed;
+
+#define HCI_OP_IO_CAPABILITY_REPLY	0x042b
+struct hci_cp_io_capability_reply {
+	bdaddr_t bdaddr;
+	__u8     capability;
+	__u8     oob_data;
+	__u8     authentication;
+} __packed;
+
+#define HCI_OP_IO_CAPABILITY_NEG_REPLY	0x0434
+struct hci_cp_io_capability_neg_reply {
 	bdaddr_t bdaddr;
 	__u8     reason;
 } __packed;
@@ -474,6 +513,12 @@ struct hci_cp_set_event_flt {
 #define HCI_CONN_SETUP_AUTO_OFF	0x01
 #define HCI_CONN_SETUP_AUTO_ON	0x02
 
+#define HCI_OP_DELETE_STORED_LINK_KEY	0x0c12
+struct hci_cp_delete_stored_link_key {
+	bdaddr_t bdaddr;
+	__u8     delete_all;
+} __packed;
+
 #define HCI_OP_WRITE_LOCAL_NAME		0x0c13
 struct hci_cp_write_local_name {
 	__u8     name[248];
@@ -537,6 +582,8 @@ struct hci_cp_host_buffer_size {
 	__le16   sco_max_pkt;
 } __packed;
 
+#define HCI_OP_WRITE_INQUIRY_MODE	0x0c45
+
 #define HCI_OP_READ_SSP_MODE		0x0c55
 struct hci_rp_read_ssp_mode {
 	__u8     status;
@@ -547,6 +594,8 @@ struct hci_rp_read_ssp_mode {
 struct hci_cp_write_ssp_mode {
 	__u8     mode;
 } __packed;
+
+#define HCI_OP_READ_INQ_RSP_TX_POWER	0x0c58
 
 #define HCI_OP_READ_LOCAL_VERSION	0x1001
 struct hci_rp_read_local_version {
@@ -831,6 +880,14 @@ struct extended_inquiry_info {
 #define HCI_EV_IO_CAPA_REQUEST		0x31
 struct hci_ev_io_capa_request {
 	bdaddr_t bdaddr;
+} __packed;
+
+#define HCI_EV_IO_CAPA_REPLY		0x32
+struct hci_ev_io_capa_reply {
+	bdaddr_t bdaddr;
+	__u8     capability;
+	__u8     oob_data;
+	__u8     authentication;
 } __packed;
 
 #define HCI_EV_SIMPLE_PAIR_COMPLETE	0x36

@@ -66,6 +66,21 @@ struct bdaddr_list {
 	struct list_head list;
 	bdaddr_t bdaddr;
 };
+
+struct bt_uuid {
+	struct list_head list;
+	u8 uuid[16];
+	u8 svc_hint;
+};
+
+struct link_key {
+	struct list_head list;
+	bdaddr_t bdaddr;
+	u8 type;
+	u8 val[16];
+	u8 pin_len;
+};
+
 #define NUM_REASSEMBLY 4
 struct hci_dev {
 	struct list_head list;
@@ -80,13 +95,18 @@ struct hci_dev {
 	bdaddr_t	bdaddr;
 	__u8		dev_name[248];
 	__u8		dev_class[3];
+	__u8		major_class;
+	__u8		minor_class;
 	__u8		features[8];
 	__u8		commands[64];
 	__u8		ssp_mode;
 	__u8		hci_ver;
 	__u16		hci_rev;
+	__u8		lmp_ver;
 	__u16		manufacturer;
+	__le16		lmp_subver;
 	__u16		voice_setting;
+	__u8		io_capability;
 
 	__u16		pkt_type;
 	__u16		esco_type;
@@ -114,6 +134,10 @@ struct hci_dev {
 
 	struct workqueue_struct	*workqueue;
 
+	struct work_struct	power_on;
+	struct work_struct	power_off;
+	struct timer_list	off_timer;
+
 	struct tasklet_struct	cmd_task;
 	struct tasklet_struct	rx_task;
 	struct tasklet_struct	tx_task;
@@ -129,11 +153,16 @@ struct hci_dev {
 	wait_queue_head_t	req_wait_q;
 	__u32			req_status;
 	__u32			req_result;
-	__u16			req_last_cmd;
+
+	__u16			init_last_cmd;
 
 	struct inquiry_cache	inq_cache;
 	struct hci_conn_hash	conn_hash;
 	struct list_head	blacklist;
+
+	struct list_head	uuids;
+
+	struct list_head	link_keys;
 
 	struct hci_dev_stats	stat;
 
@@ -185,9 +214,15 @@ struct hci_conn {
 	__u8             auth_type;
 	__u8             sec_level;
 	__u8		 pending_sec_level;
+	__u8		 pin_length;
+	__u8		 io_capability;
 	__u8             power_save;
 	__u16            disc_timeout;
 	unsigned long	 pend;
+
+	__u8		remote_cap;
+	__u8		remote_oob;
+	__u8		remote_auth;
 
 	unsigned int	 sent;
 
@@ -437,6 +472,16 @@ int hci_inquiry(void __user *arg);
 struct bdaddr_list *hci_blacklist_lookup(struct hci_dev *hdev, bdaddr_t *bdaddr);
 int hci_blacklist_clear(struct hci_dev *hdev);
 
+int hci_uuids_clear(struct hci_dev *hdev);
+
+int hci_link_keys_clear(struct hci_dev *hdev);
+struct link_key *hci_find_link_key(struct hci_dev *hdev, bdaddr_t *bdaddr);
+int hci_add_link_key(struct hci_dev *hdev, int new_key, bdaddr_t *bdaddr,
+						u8 *key, u8 type, u8 pin_len);
+int hci_remove_link_key(struct hci_dev *hdev, bdaddr_t *bdaddr);
+
+void hci_del_off_timer(struct hci_dev *hdev);
+
 void hci_event_packet(struct hci_dev *hdev, struct sk_buff *skb);
 
 int hci_recv_frame(struct sk_buff *skb);
@@ -458,6 +503,7 @@ void hci_conn_del_sysfs(struct hci_conn *conn);
 #define lmp_sniffsubr_capable(dev) ((dev)->features[5] & LMP_SNIFF_SUBR)
 #define lmp_esco_capable(dev)      ((dev)->features[3] & LMP_ESCO)
 #define lmp_ssp_capable(dev)       ((dev)->features[6] & LMP_SIMPLE_PAIR)
+#define lmp_no_flush_capable(dev)  ((dev)->features[6] & LMP_NO_FLUSH)
 
 /* ----- HCI protocols ----- */
 struct hci_proto {
@@ -660,12 +706,24 @@ void *hci_sent_cmd_data(struct hci_dev *hdev, __u16 opcode);
 void hci_si_event(struct hci_dev *hdev, int type, int dlen, void *data);
 
 /* ----- HCI Sockets ----- */
-void hci_send_to_sock(struct hci_dev *hdev, struct sk_buff *skb);
+void hci_send_to_sock(struct hci_dev *hdev, struct sk_buff *skb,
+							struct sock *skip_sk);
 
 /* Management interface */
 int mgmt_control(struct sock *sk, struct msghdr *msg, size_t len);
 int mgmt_index_added(u16 index);
 int mgmt_index_removed(u16 index);
+int mgmt_powered(u16 index, u8 powered);
+int mgmt_discoverable(u16 index, u8 discoverable);
+int mgmt_connectable(u16 index, u8 connectable);
+int mgmt_new_key(u16 index, struct link_key *key, u8 old_key_type);
+int mgmt_connected(u16 index, bdaddr_t *bdaddr);
+int mgmt_disconnected(u16 index, bdaddr_t *bdaddr);
+int mgmt_disconnect_failed(u16 index);
+int mgmt_connect_failed(u16 index, bdaddr_t *bdaddr, u8 status);
+int mgmt_pin_code_request(u16 index, bdaddr_t *bdaddr);
+int mgmt_pin_code_reply_complete(u16 index, bdaddr_t *bdaddr, u8 status);
+int mgmt_pin_code_neg_reply_complete(u16 index, bdaddr_t *bdaddr, u8 status);
 
 /* HCI info for socket */
 #define hci_pi(sk) ((struct hci_pinfo *) sk)
