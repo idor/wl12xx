@@ -50,7 +50,7 @@ static void _rtl_pci_update_default_setting(struct ieee80211_hw *hw)
 	u8 pcibridge_vendor = pcipriv->ndis_adapter.pcibridge_vendor;
 
 	ppsc->reg_rfps_level = 0;
-	ppsc->b_support_aspm = 0;
+	ppsc->support_aspm = 0;
 
 	/*Update PCI ASPM setting */
 	ppsc->const_amdpci_aspm = rtlpci->const_amdpci_aspm;
@@ -115,29 +115,29 @@ static void _rtl_pci_update_default_setting(struct ieee80211_hw *hw)
 	switch (rtlpci->const_support_pciaspm) {
 	case 0:{
 			/*Not support ASPM. */
-			bool b_support_aspm = false;
-			ppsc->b_support_aspm = b_support_aspm;
+			bool support_aspm = false;
+			ppsc->support_aspm = support_aspm;
 			break;
 		}
 	case 1:{
 			/*Support ASPM. */
-			bool b_support_aspm = true;
-			bool b_support_backdoor = true;
-			ppsc->b_support_aspm = b_support_aspm;
+			bool support_aspm = true;
+			bool support_backdoor = true;
+			ppsc->support_aspm = support_aspm;
 
 			/*if(priv->oem_id == RT_CID_TOSHIBA &&
 			   !priv->ndis_adapter.amd_l1_patch)
-			   b_support_backdoor = false; */
+			   support_backdoor = false; */
 
-			ppsc->b_support_backdoor = b_support_backdoor;
+			ppsc->support_backdoor = support_backdoor;
 
 			break;
 		}
 	case 2:
 		/*ASPM value set by chipset. */
 		if (pcibridge_vendor == PCI_BRIDGE_VENDOR_INTEL) {
-			bool b_support_aspm = true;
-			ppsc->b_support_aspm = b_support_aspm;
+			bool support_aspm = true;
+			ppsc->support_aspm = support_aspm;
 		}
 		break;
 	default:
@@ -476,9 +476,9 @@ static void _rtl_pci_tx_isr(struct ieee80211_hw *hw, int prio)
 
 		skb = __skb_dequeue(&ring->queue);
 		pci_unmap_single(rtlpci->pdev,
-				 le32_to_cpu(rtlpriv->cfg->ops->
+				 rtlpriv->cfg->ops->
 					     get_desc((u8 *) entry, true,
-						      HW_DESC_TXBUFF_ADDR)),
+						      HW_DESC_TXBUFF_ADDR),
 				 skb->len, PCI_DMA_TODEVICE);
 
 		RT_TRACE(rtlpriv, (COMP_INTR | COMP_SEND), DBG_TRACE,
@@ -557,7 +557,7 @@ static void _rtl_pci_rx_interrupt(struct ieee80211_hw *hw)
 			return;
 		} else {
 			struct ieee80211_hdr *hdr;
-			u16 fc;
+			__le16 fc;
 			struct sk_buff *new_skb = NULL;
 
 			rtlpriv->cfg->ops->query_rx_desc(hw, &stats,
@@ -583,9 +583,9 @@ static void _rtl_pci_rx_interrupt(struct ieee80211_hw *hw)
 			 */
 
 			hdr = (struct ieee80211_hdr *)(skb->data);
-			fc = le16_to_cpu(hdr->frame_control);
+			fc = hdr->frame_control;
 
-			if (!stats.b_crc) {
+			if (!stats.crc) {
 				memcpy(IEEE80211_SKB_RXCB(skb), &rx_status,
 				       sizeof(rx_status));
 
@@ -666,7 +666,7 @@ static void _rtl_pci_rx_interrupt(struct ieee80211_hw *hw)
 
 		}
 done:
-		bufferaddress = cpu_to_le32(*((dma_addr_t *) skb->cb));
+		bufferaddress = (u32)(*((dma_addr_t *) skb->cb));
 		tmp_one = 1;
 		rtlpriv->cfg->ops->set_desc((u8 *) pdesc, false,
 					    HW_DESC_RXBUFF_ADDR,
@@ -890,17 +890,17 @@ static void _rtl_pci_init_struct(struct ieee80211_hw *hw,
 	rtlhal->hw = hw;
 	rtlpci->pdev = pdev;
 
-	ppsc->b_inactiveps = false;
-	ppsc->b_leisure_ps = true;
-	ppsc->b_fwctrl_lps = true;
-	ppsc->b_reg_fwctrl_lps = 3;
+	ppsc->inactiveps = false;
+	ppsc->leisure_ps = true;
+	ppsc->fwctrl_lps = true;
+	ppsc->reg_fwctrl_lps = 3;
 	ppsc->reg_max_lps_awakeintvl = 5;
 
-	if (ppsc->b_reg_fwctrl_lps == 1)
+	if (ppsc->reg_fwctrl_lps == 1)
 		ppsc->fwctrl_psmode = FW_PS_MIN_MODE;
-	else if (ppsc->b_reg_fwctrl_lps == 2)
+	else if (ppsc->reg_fwctrl_lps == 2)
 		ppsc->fwctrl_psmode = FW_PS_MAX_MODE;
-	else if (ppsc->b_reg_fwctrl_lps == 3)
+	else if (ppsc->reg_fwctrl_lps == 3)
 		ppsc->fwctrl_psmode = FW_PS_DTIM_MODE;
 
 	/*Tx/Rx related var */
@@ -955,9 +955,8 @@ static int _rtl_pci_init_tx_ring(struct ieee80211_hw *hw,
 		 ("queue:%d, ring_addr:%p\n", prio, ring));
 
 	for (i = 0; i < entries; i++) {
-		nextdescaddress = cpu_to_le32((u32) dma +
-					      ((i + 1) % entries) *
-					      sizeof(*ring));
+		nextdescaddress = (u32) dma + ((i + 1) % entries) *
+					      sizeof(*ring);
 
 		rtlpriv->cfg->ops->set_desc((u8 *)&(ring[i]),
 					    true, HW_DESC_TX_NEXTDESC_ADDR,
@@ -1021,7 +1020,7 @@ static int _rtl_pci_init_rx_ring(struct ieee80211_hw *hw)
 					   rtlpci->rxbuffersize,
 					   PCI_DMA_FROMDEVICE);
 
-			bufferaddress = cpu_to_le32(*((dma_addr_t *)skb->cb));
+			bufferaddress = (u32)(*((dma_addr_t *)skb->cb));
 			rtlpriv->cfg->ops->set_desc((u8 *)entry, false,
 						    HW_DESC_RXBUFF_ADDR,
 						    (u8 *)&bufferaddress);
@@ -1052,9 +1051,9 @@ static void _rtl_pci_free_tx_ring(struct ieee80211_hw *hw,
 		struct sk_buff *skb = __skb_dequeue(&ring->queue);
 
 		pci_unmap_single(rtlpci->pdev,
-				 le32_to_cpu(rtlpriv->cfg->
+				 rtlpriv->cfg->
 					     ops->get_desc((u8 *) entry, true,
-						   HW_DESC_TXBUFF_ADDR)),
+						   HW_DESC_TXBUFF_ADDR),
 				 skb->len, PCI_DMA_TODEVICE);
 		kfree_skb(skb);
 		ring->idx = (ring->idx + 1) % ring->entries;
@@ -1186,11 +1185,11 @@ int rtl_pci_reset_trx_ring(struct ieee80211_hw *hw)
 				    __skb_dequeue(&ring->queue);
 
 				pci_unmap_single(rtlpci->pdev,
-						 le32_to_cpu(rtlpriv->cfg->ops->
+						 rtlpriv->cfg->ops->
 							 get_desc((u8 *)
 							 entry,
 							 true,
-							 HW_DESC_TXBUFF_ADDR)),
+							 HW_DESC_TXBUFF_ADDR),
 						 skb->len, PCI_DMA_TODEVICE);
 				kfree_skb(skb);
 				ring->idx = (ring->idx + 1) % ring->entries;
@@ -1204,7 +1203,7 @@ int rtl_pci_reset_trx_ring(struct ieee80211_hw *hw)
 	return 0;
 }
 
-static unsigned int _rtl_mac_to_hwqueue(u16 fc,
+static unsigned int _rtl_mac_to_hwqueue(__le16 fc,
 		unsigned int mac80211_queue_index)
 {
 	unsigned int hw_queue_index;
@@ -1254,7 +1253,7 @@ static int rtl_pci_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
 	unsigned int queue_index, hw_queue;
 	unsigned long flags;
 	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)(skb->data);
-	u16 fc = le16_to_cpu(hdr->frame_control);
+	__le16 fc = hdr->frame_control;
 	u8 *pda_addr = hdr->addr1;
 	struct rtl_pci *rtlpci = rtl_pcidev(rtl_pcipriv(hw));
 	/*ssn */
