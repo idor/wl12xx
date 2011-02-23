@@ -1535,6 +1535,13 @@ mwl8k_txq_reclaim(struct ieee80211_hw *hw, int index, int limit, int force)
 
 		info = IEEE80211_SKB_CB(skb);
 		ieee80211_tx_info_clear_status(info);
+
+		/* Rate control is happening in the firmware.
+		 * Ensure no tx rate is being reported.
+		 */
+                info->status.rates[0].idx = -1;
+                info->status.rates[0].count = 1;
+
 		if (MWL8K_TXD_SUCCESS(status))
 			info->flags |= IEEE80211_TX_STAT_ACK;
 
@@ -2121,8 +2128,18 @@ static int mwl8k_cmd_set_hw_spec(struct ieee80211_hw *hw)
 	cmd->ps_cookie = cpu_to_le32(priv->cookie_dma);
 	cmd->rx_queue_ptr = cpu_to_le32(priv->rxq[0].rxd_dma);
 	cmd->num_tx_queues = cpu_to_le32(MWL8K_TX_QUEUES);
-	for (i = 0; i < MWL8K_TX_QUEUES; i++)
-		cmd->tx_queue_ptrs[i] = cpu_to_le32(priv->txq[i].txd_dma);
+
+	/*
+	 * Mac80211 stack has Q0 as highest priority and Q3 as lowest in
+	 * that order. Firmware has Q3 as highest priority and Q0 as lowest
+	 * in that order. Map Q3 of mac80211 to Q0 of firmware so that the
+	 * priority is interpreted the right way in firmware.
+	 */
+	for (i = 0; i < MWL8K_TX_QUEUES; i++) {
+		int j = MWL8K_TX_QUEUES - 1 - i;
+		cmd->tx_queue_ptrs[i] = cpu_to_le32(priv->txq[j].txd_dma);
+	}
+
 	cmd->flags = cpu_to_le32(MWL8K_SET_HW_SPEC_FLAG_HOST_DECR_MGMT |
 				 MWL8K_SET_HW_SPEC_FLAG_HOSTFORM_PROBERESP |
 				 MWL8K_SET_HW_SPEC_FLAG_HOSTFORM_BEACON);
@@ -3945,9 +3962,13 @@ static int mwl8k_config(struct ieee80211_hw *hw, u32 changed)
 		if (rc)
 			goto out;
 
-		rc = mwl8k_cmd_rf_antenna(hw, MWL8K_RF_ANTENNA_RX, 0x7);
-		if (!rc)
-			rc = mwl8k_cmd_rf_antenna(hw, MWL8K_RF_ANTENNA_TX, 0x7);
+		rc = mwl8k_cmd_rf_antenna(hw, MWL8K_RF_ANTENNA_RX, 0x3);
+		if (rc)
+			wiphy_warn(hw->wiphy, "failed to set # of RX antennas");
+		rc = mwl8k_cmd_rf_antenna(hw, MWL8K_RF_ANTENNA_TX, 0x7);
+		if (rc)
+			wiphy_warn(hw->wiphy, "failed to set # of TX antennas");
+
 	} else {
 		rc = mwl8k_cmd_rf_tx_power(hw, conf->power_level);
 		if (rc)
@@ -4320,12 +4341,14 @@ static int mwl8k_conf_tx(struct ieee80211_hw *hw, u16 queue,
 		if (!priv->wmm_enabled)
 			rc = mwl8k_cmd_set_wmm_mode(hw, 1);
 
-		if (!rc)
-			rc = mwl8k_cmd_set_edca_params(hw, queue,
+		if (!rc) {
+			int q = MWL8K_TX_QUEUES - 1 - queue;
+			rc = mwl8k_cmd_set_edca_params(hw, q,
 						       params->cw_min,
 						       params->cw_max,
 						       params->aifs,
 						       params->txop);
+		}
 
 		mwl8k_fw_unlock(hw);
 	}
@@ -4760,7 +4783,7 @@ static int mwl8k_firmware_load_success(struct mwl8k_priv *priv)
 	hw->queues = MWL8K_TX_QUEUES;
 
 	/* Set rssi values to dBm */
-	hw->flags |= IEEE80211_HW_SIGNAL_DBM;
+	hw->flags |= IEEE80211_HW_SIGNAL_DBM | IEEE80211_HW_HAS_RATE_CONTROL;
 	hw->vif_data_size = sizeof(struct mwl8k_vif);
 	hw->sta_data_size = sizeof(struct mwl8k_sta);
 
