@@ -2631,7 +2631,7 @@ void iwl4965_mac_stop(struct ieee80211_hw *hw)
 	IWL_DEBUG_MAC80211(priv, "leave\n");
 }
 
-int iwl4965_mac_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
+void iwl4965_mac_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
 {
 	struct iwl_priv *priv = hw->priv;
 
@@ -2644,7 +2644,6 @@ int iwl4965_mac_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
 		dev_kfree_skb_any(skb);
 
 	IWL_DEBUG_MACDUMP(priv, "leave\n");
-	return NETDEV_TX_OK;
 }
 
 void iwl4965_mac_update_tkip_key(struct ieee80211_hw *hw,
@@ -3058,7 +3057,7 @@ static void iwl4965_init_hw_rates(struct iwl_priv *priv,
 	int i;
 
 	for (i = 0; i < IWL_RATE_COUNT_LEGACY; i++) {
-		rates[i].bitrate = iwl_rates[i].ieee * 5;
+		rates[i].bitrate = iwlegacy_rates[i].ieee * 5;
 		rates[i].hw_value = i; /* Rate scaling will work on indexes */
 		rates[i].hw_value_short = i;
 		rates[i].flags = 0;
@@ -3067,7 +3066,7 @@ static void iwl4965_init_hw_rates(struct iwl_priv *priv,
 			 * If CCK != 1M then set short preamble rate flag.
 			 */
 			rates[i].flags |=
-				(iwl_rates[i].plcp == IWL_RATE_1M_PLCP) ?
+				(iwlegacy_rates[i].plcp == IWL_RATE_1M_PLCP) ?
 					0 : IEEE80211_RATE_SHORT_PREAMBLE;
 		}
 	}
@@ -3616,7 +3615,7 @@ module_exit(iwl4965_exit);
 module_init(iwl4965_init);
 
 #ifdef CONFIG_IWLWIFI_LEGACY_DEBUG
-module_param_named(debug, iwl_debug_level, uint, S_IRUGO | S_IWUSR);
+module_param_named(debug, iwlegacy_debug_level, uint, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(debug, "debug output mask");
 #endif
 
