@@ -131,9 +131,16 @@ extern u32 wl12xx_debug_level;
 
 
 #define WL1271_FW_NAME "ti-connectivity/wl1271-fw-2.bin"
-#define WL1271_AP_FW_NAME "ti-connectivity/wl1271-fw-ap.bin"
+#define WL128X_FW_NAME "ti-connectivity/wl128x-fw.bin"
+#define WL127X_AP_FW_NAME "ti-connectivity/wl1271-fw-ap.bin"
+#define WL128X_AP_FW_NAME "ti-connectivity/wl128x-fw-ap.bin"
 
-#define WL1271_NVS_NAME "ti-connectivity/wl1271-nvs.bin"
+/*
+ * wl127x and wl128x are using the same NVS file name. However, the
+ * ini parameters between them are different.  The driver validates
+ * the correct NVS size in wl1271_boot_upload_nvs().
+ */
+#define WL12XX_NVS_NAME "ti-connectivity/wl1271-nvs.bin"
 
 #define WL1271_TX_SECURITY_LO16(s) ((u16)((s) & 0xffff))
 #define WL1271_TX_SECURITY_HI32(s) ((u32)(((s) >> 16) & 0xffffffff))
@@ -200,13 +207,29 @@ struct wl1271_partition_set {
 
 struct wl1271;
 
-#define WL12XX_NUM_FW_VER 5
+enum {
+	FW_VER_CHIP,
+	FW_VER_IF_TYPE,
+	FW_VER_MAJOR,
+	FW_VER_SUBTYPE,
+	FW_VER_MINOR,
 
-/* FIXME: I'm not sure about this structure name */
+	NUM_FW_VER
+};
+
+#define FW_VER_CHIP_WL127X 6
+#define FW_VER_CHIP_WL128X 7
+
+#define FW_VER_IF_TYPE_STA 1
+#define FW_VER_IF_TYPE_AP  2
+
+#define FW_VER_MINOR_1_SPARE_STA_MIN 58
+#define FW_VER_MINOR_1_SPARE_AP_MIN  47
+
 struct wl1271_chip {
 	u32 id;
 	char fw_ver_str[ETHTOOL_BUSINFO_LEN];
-	unsigned int fw_ver[WL12XX_NUM_FW_VER];
+	unsigned int fw_ver[NUM_FW_VER];
 };
 
 struct wl1271_stats {
@@ -261,6 +284,8 @@ struct wl1271_fw_sta_status {
 	u8  tx_total;
 	u8  reserved1;
 	__le16 reserved2;
+	/* Total structure size is 68 bytes */
+	u32 padding;
 } __packed;
 
 struct wl1271_fw_full_status {
@@ -297,6 +322,7 @@ struct wl1271_if_operations {
 	struct device* (*dev)(struct wl1271 *wl);
 	void (*enable_irq)(struct wl1271 *wl);
 	void (*disable_irq)(struct wl1271 *wl);
+	void (*set_block_size) (struct wl1271 *wl);
 };
 
 #define MAX_NUM_KEYS 14
@@ -371,7 +397,7 @@ struct wl1271 {
 	u8 *fw;
 	size_t fw_len;
 	u8 fw_bss_type;
-	struct wl1271_nvs_file *nvs;
+	void *nvs;
 	size_t nvs_len;
 
 	s8 hw_pg_ver;
@@ -390,6 +416,9 @@ struct wl1271 {
 	u32 tx_blocks_freed[NUM_TX_QUEUES];
 	u32 tx_blocks_available;
 	u32 tx_results_count;
+	/* Indicates how many memory blocks should be moved to the RX pool */
+	int tx_total_diff;
+	u32 tx_new_total;
 
 	/* Transmitted TX packets counter for chipset interface */
 	u32 tx_packets_count;
@@ -527,6 +556,9 @@ struct wl1271 {
 	bool ba_support;
 	u8 ba_rx_bitmap;
 
+	u32 block_size;
+	int tcxo_clock;
+
 	/*
 	 * AP-mode - links indexed by HLID. The global and broadcast links
 	 * are always active.
@@ -577,5 +609,11 @@ int wl1271_plt_stop(struct wl1271 *wl);
 
 /* Each RX/TX transaction requires an end-of-transaction transfer */
 #define WL12XX_QUIRK_END_OF_TRANSACTION	BIT(0)
+
+/*
+ * Older firmwares use 2 spare TX blocks
+ * (for STA < 6.1.3.50.58 or for AP < 6.2.0.0.47)
+ */
+#define WL12XX_QUIRK_USE_2_SPARE_BLOCKS BIT(1)
 
 #endif

@@ -132,8 +132,15 @@ static int wl1271_tx_allocate(struct wl1271 *wl, struct sk_buff *skb, u32 extra,
 {
 	struct wl1271_tx_hw_descr *desc;
 	u32 total_len = skb->len + sizeof(struct wl1271_tx_hw_descr) + extra;
+	u32 len;
 	u32 total_blocks;
 	int id, ret = -EBUSY;
+	u32 spare_blocks;
+
+	if (unlikely(wl->quirks & WL12XX_QUIRK_USE_2_SPARE_BLOCKS))
+		spare_blocks = 2;
+	else
+		spare_blocks = 1;
 
 	if (buf_offset + total_len > WL1271_AGGR_BUFFER_SIZE)
 		return -EAGAIN;
@@ -145,14 +152,26 @@ static int wl1271_tx_allocate(struct wl1271 *wl, struct sk_buff *skb, u32 extra,
 
 	/* approximate the number of blocks required for this packet
 	   in the firmware */
-	total_blocks = total_len + TX_HW_BLOCK_SIZE - 1;
-	total_blocks = total_blocks / TX_HW_BLOCK_SIZE + TX_HW_BLOCK_SPARE;
+	if (wl->block_size)
+		len = ALIGN(total_len, wl->block_size);
+	else
+		len = total_len;
+
+	total_blocks = (len + TX_HW_BLOCK_SIZE - 1) / TX_HW_BLOCK_SIZE +
+		spare_blocks;
+
 	if (total_blocks <= wl->tx_blocks_available) {
 		desc = (struct wl1271_tx_hw_descr *)skb_push(
 			skb, total_len - skb->len);
 
-		desc->extra_mem_blocks = TX_HW_BLOCK_SPARE;
-		desc->total_mem_blocks = total_blocks;
+		/* HW descriptor fields change between wl127x and wl128x */
+		if (wl->chip.id == CHIP_ID_1283_PG20) {
+			desc->wl128x_mem.total_mem_blocks = total_blocks;
+		} else {
+			desc->wl127x_mem.extra_blocks = spare_blocks;
+			desc->wl127x_mem.total_mem_blocks = total_blocks;
+		}
+
 		desc->id = id;
 
 		wl->tx_blocks_available -= total_blocks;
@@ -178,7 +197,7 @@ static void wl1271_tx_fill_hdr(struct wl1271 *wl, struct sk_buff *skb,
 {
 	struct timespec ts;
 	struct wl1271_tx_hw_descr *desc;
-	int pad, ac, rate_idx;
+	int aligned_len, ac, rate_idx;
 	s64 hosttime;
 	u16 tx_attr;
 
@@ -202,12 +221,28 @@ static void wl1271_tx_fill_hdr(struct wl1271 *wl, struct sk_buff *skb,
 	else
 		desc->life_time = cpu_to_le16(TX_HW_AP_MODE_PKT_LIFETIME_TU);
 
-	/* configure the tx attributes */
-	tx_attr = wl->session_counter << TX_HW_ATTR_OFST_SESSION_COUNTER;
-
 	/* queue (we use same identifiers for tid's and ac's */
 	ac = wl1271_tx_get_queue(skb_get_queue_mapping(skb));
 	desc->tid = ac;
+
+	if (skb->pkt_type == TX_PKT_TYPE_DUMMY_REQ) {
+		/*
+		 * FW expects the dummy packet to have an invalid session id -
+		 * any session id that is different than the one set in the join
+		 */
+		tx_attr = ((~wl->session_counter) <<
+			   TX_HW_ATTR_OFST_SESSION_COUNTER) &
+			   TX_HW_ATTR_SESSION_COUNTER;
+
+		tx_attr |= TX_HW_ATTR_TX_DUMMY_REQ;
+
+		/* Dummy packets require the TID to be management */
+		desc->tid = WL1271_TID_MGMT;
+	} else {
+		/* configure the tx attributes */
+		tx_attr =
+			wl->session_counter << TX_HW_ATTR_OFST_SESSION_COUNTER;
+	}
 
 	if (wl->bss_type != BSS_TYPE_AP_BSS) {
 		desc->aid = hlid;
@@ -237,20 +272,38 @@ static void wl1271_tx_fill_hdr(struct wl1271 *wl, struct sk_buff *skb,
 	tx_attr |= rate_idx << TX_HW_ATTR_OFST_RATE_POLICY;
 	desc->reserved = 0;
 
-	/* align the length (and store in terms of words) */
-	pad = ALIGN(skb->len, WL1271_TX_ALIGN_TO);
-	desc->length = cpu_to_le16(pad >> 2);
+	if (wl->block_size) {
+		aligned_len = ALIGN(skb->len, wl->block_size);
 
-	/* calculate number of padding bytes */
-	pad = pad - skb->len;
-	tx_attr |= pad << TX_HW_ATTR_OFST_LAST_WORD_PAD;
+		desc->wl128x_mem.extra_bytes = aligned_len - skb->len;
+		desc->length = cpu_to_le16(aligned_len >> 2);
+
+		wl1271_debug(DEBUG_TX, "tx_fill_hdr: hlid: %d "
+			     "tx_attr: 0x%x len: %d life: %d mem: %d",
+			     desc->hlid, tx_attr,
+			     le16_to_cpu(desc->length),
+			     le16_to_cpu(desc->life_time),
+			     desc->wl128x_mem.total_mem_blocks);
+	} else {
+		int pad;
+
+		/* align the length (and store in terms of words) */
+		aligned_len = ALIGN(skb->len, WL1271_TX_ALIGN_TO);
+		desc->length = cpu_to_le16(aligned_len >> 2);
+
+		/* calculate number of padding bytes */
+		pad = aligned_len - skb->len;
+		tx_attr |= pad << TX_HW_ATTR_OFST_LAST_WORD_PAD;
+
+		wl1271_debug(DEBUG_TX, "tx_fill_hdr: pad: %d hlid: %d "
+			     "tx_attr: 0x%x len: %d life: %d mem: %d", pad,
+			     desc->hlid, tx_attr,
+			     le16_to_cpu(desc->length),
+			     le16_to_cpu(desc->life_time),
+			     desc->wl127x_mem.total_mem_blocks);
+	}
 
 	desc->tx_attr = cpu_to_le16(tx_attr);
-
-	wl1271_debug(DEBUG_TX, "tx_fill_hdr: pad: %d hlid: %d "
-		"tx_attr: 0x%x len: %d life: %d mem: %d", pad, desc->hlid,
-		le16_to_cpu(desc->tx_attr), le16_to_cpu(desc->length),
-		le16_to_cpu(desc->life_time), desc->total_mem_blocks);
 }
 
 /* caller must hold wl->mutex */
@@ -305,11 +358,18 @@ static int wl1271_prepare_tx_frame(struct wl1271 *wl, struct sk_buff *skb,
 	wl1271_tx_fill_hdr(wl, skb, extra, info, hlid);
 
 	/*
-	 * The length of each packet is stored in terms of words. Thus, we must
-	 * pad the skb data to make sure its length is aligned.
-	 * The number of padding bytes is computed and set in wl1271_tx_fill_hdr
+	 * The length of each packet is stored in terms of
+	 * words. Thus, we must pad the skb data to make sure its
+	 * length is aligned.  The number of padding bytes is computed
+	 * and set in wl1271_tx_fill_hdr.
+	 * In special cases, we want to align to a specific block size
+	 * (eg. for wl128x with SDIO we align to 256).
 	 */
-	total_len = ALIGN(skb->len, WL1271_TX_ALIGN_TO);
+	if (wl->block_size)
+		total_len = ALIGN(skb->len, wl->block_size);
+	else
+		total_len = ALIGN(skb->len, WL1271_TX_ALIGN_TO);
+
 	memcpy(wl->aggr_buf + buf_offset, skb->data, skb->len);
 	memset(wl->aggr_buf + buf_offset + skb->len, 0, total_len - skb->len);
 
@@ -549,6 +609,12 @@ static void wl1271_tx_complete_packet(struct wl1271 *wl,
 	skb = wl->tx_frames[id];
 	info = IEEE80211_SKB_CB(skb);
 
+	if (skb->pkt_type == TX_PKT_TYPE_DUMMY_REQ) {
+		dev_kfree_skb(skb);
+		wl1271_free_tx_id(wl, id);
+		return;
+	}
+
 	/* update the TX status info */
 	if (result->status == TX_SUCCESS) {
 		if (!(info->flags & IEEE80211_TX_CTL_NO_ACK))
@@ -678,10 +744,15 @@ void wl1271_tx_reset(struct wl1271 *wl)
 			while ((skb = skb_dequeue(&wl->tx_queue[i]))) {
 				wl1271_debug(DEBUG_TX, "freeing skb 0x%p",
 					     skb);
-				info = IEEE80211_SKB_CB(skb);
-				info->status.rates[0].idx = -1;
-				info->status.rates[0].count = 0;
-				ieee80211_tx_status(wl->hw, skb);
+
+				if (skb->pkt_type == TX_PKT_TYPE_DUMMY_REQ) {
+					dev_kfree_skb(skb);
+				} else {
+					info = IEEE80211_SKB_CB(skb);
+					info->status.rates[0].idx = -1;
+					info->status.rates[0].count = 0;
+					ieee80211_tx_status(wl->hw, skb);
+				}
 			}
 		}
 	}
@@ -702,21 +773,29 @@ void wl1271_tx_reset(struct wl1271 *wl)
 		wl1271_free_tx_id(wl, i);
 		wl1271_debug(DEBUG_TX, "freeing skb 0x%p", skb);
 
-		/* Remove private headers before passing the skb to mac80211 */
-		info = IEEE80211_SKB_CB(skb);
-		skb_pull(skb, sizeof(struct wl1271_tx_hw_descr));
-		if (info->control.hw_key &&
-		    info->control.hw_key->cipher == WLAN_CIPHER_SUITE_TKIP) {
-			int hdrlen = ieee80211_get_hdrlen_from_skb(skb);
-			memmove(skb->data + WL1271_TKIP_IV_SPACE, skb->data,
-				hdrlen);
-			skb_pull(skb, WL1271_TKIP_IV_SPACE);
+		if (skb->pkt_type == TX_PKT_TYPE_DUMMY_REQ) {
+			dev_kfree_skb(skb);
+		} else {
+			/*
+			 * Remove private headers before passing the skb to
+			 * mac80211
+			 */
+			info = IEEE80211_SKB_CB(skb);
+			skb_pull(skb, sizeof(struct wl1271_tx_hw_descr));
+			if (info->control.hw_key &&
+			    info->control.hw_key->cipher ==
+			    WLAN_CIPHER_SUITE_TKIP) {
+				int hdrlen = ieee80211_get_hdrlen_from_skb(skb);
+				memmove(skb->data + WL1271_TKIP_IV_SPACE,
+					skb->data, hdrlen);
+				skb_pull(skb, WL1271_TKIP_IV_SPACE);
+			}
+
+			info->status.rates[0].idx = -1;
+			info->status.rates[0].count = 0;
+
+			ieee80211_tx_status(wl->hw, skb);
 		}
-
-		info->status.rates[0].idx = -1;
-		info->status.rates[0].count = 0;
-
-		ieee80211_tx_status(wl->hw, skb);
 	}
 }
 

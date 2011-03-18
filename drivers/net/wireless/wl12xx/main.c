@@ -298,7 +298,7 @@ static struct conf_drv_settings default_conf = {
 		.tx_ba_win_size = 64,
 		.inactivity_timeout = 10000,
 	},
-	.mem = {
+	.mem_wl127x = {
 		.num_stations                 = 1,
 		.ssid_profiles                = 1,
 		.rx_block_num                 = 70,
@@ -307,7 +307,17 @@ static struct conf_drv_settings default_conf = {
 		.min_req_tx_blocks            = 100,
 		.min_req_rx_blocks            = 22,
 		.tx_min                       = 27,
-	}
+	},
+	.mem_wl128x = {
+		.num_stations                 = 1,
+		.ssid_profiles                = 1,
+		.rx_block_num                 = 40,
+		.tx_min_block_num             = 40,
+		.dynamic_memory               = 1,
+		.min_req_tx_blocks            = 45,
+		.min_req_rx_blocks            = 22,
+		.tx_min                       = 27,
+	},
 };
 
 static void __wl1271_op_remove_interface(struct wl1271 *wl);
@@ -438,15 +448,30 @@ static int wl1271_plt_init(struct wl1271 *wl)
 	struct conf_tx_tid *conf_tid;
 	int ret, i;
 
-	ret = wl1271_cmd_general_parms(wl);
+	if (wl->chip.id == CHIP_ID_1283_PG20)
+		ret = wl128x_cmd_general_parms(wl);
+	else
+		ret = wl1271_cmd_general_parms(wl);
 	if (ret < 0)
 		return ret;
 
-	ret = wl1271_cmd_radio_parms(wl);
+	if (wl->chip.id == CHIP_ID_1283_PG20)
+		ret = wl128x_cmd_radio_parms(wl);
+	else
+		ret = wl1271_cmd_radio_parms(wl);
 	if (ret < 0)
 		return ret;
 
-	ret = wl1271_cmd_ext_radio_parms(wl);
+	if (wl->chip.id != CHIP_ID_1283_PG20) {
+		ret = wl1271_cmd_ext_radio_parms(wl);
+		if (ret < 0)
+			return ret;
+	}
+	if (ret < 0)
+		return ret;
+
+	/* Chip-specific initializations */
+	ret = wl1271_chip_specific_init(wl);
 	if (ret < 0)
 		return ret;
 
@@ -593,15 +618,26 @@ static void wl1271_fw_status(struct wl1271 *wl,
 {
 	struct wl1271_fw_common_status *status = &full_status->common;
 	struct timespec ts;
+	u32 old_tx_blk_count = wl->tx_blocks_available;
 	u32 total = 0;
 	int i;
 
-	if (wl->bss_type == BSS_TYPE_AP_BSS)
+	if (wl->bss_type == BSS_TYPE_AP_BSS) {
 		wl1271_raw_read(wl, FW_STATUS_ADDR, status,
 				sizeof(struct wl1271_fw_ap_status), false);
-	else
+	} else {
 		wl1271_raw_read(wl, FW_STATUS_ADDR, status,
 				sizeof(struct wl1271_fw_sta_status), false);
+
+		/* Update tx total blocks change */
+		wl->tx_total_diff +=
+			((struct wl1271_fw_sta_status *)status)->tx_total -
+			wl->tx_new_total;
+
+		/* Update total tx blocks */
+		wl->tx_new_total =
+			((struct wl1271_fw_sta_status *)status)->tx_total;
+	}
 
 	wl1271_debug(DEBUG_IRQ, "intr: 0x%x (fw_rx_counter = %d, "
 		     "drv_rx_counter = %d, tx_results_counter = %d)",
@@ -612,17 +648,28 @@ static void wl1271_fw_status(struct wl1271 *wl,
 
 	/* update number of available TX blocks */
 	for (i = 0; i < NUM_TX_QUEUES; i++) {
-		u32 cnt = le32_to_cpu(status->tx_released_blks[i]) -
+		total += le32_to_cpu(status->tx_released_blks[i]) -
 			wl->tx_blocks_freed[i];
 
 		wl->tx_blocks_freed[i] =
 			le32_to_cpu(status->tx_released_blks[i]);
-		wl->tx_blocks_available += cnt;
-		total += cnt;
+
+	}
+
+	/*
+	 * By adding the freed blocks to tx_total_diff we are actually
+	 * moving them to the RX pool.
+	 */
+	wl->tx_total_diff += total;
+
+	/* if we have positive difference, add the blocks to the TX pool */
+	if (wl->tx_total_diff >= 0) {
+		wl->tx_blocks_available += wl->tx_total_diff;
+		wl->tx_total_diff = 0;
 	}
 
 	/* if more blocks are available now, tx work can be scheduled */
-	if (total)
+	if (wl->tx_blocks_available > old_tx_blk_count)
 		clear_bit(WL1271_FLAG_FW_TX_BUSY, &wl->flags);
 
 	/* for AP update num of allocated TX blocks per link and ps status */
@@ -785,11 +832,17 @@ static int wl1271_fetch_firmware(struct wl1271 *wl)
 
 	switch (wl->bss_type) {
 	case BSS_TYPE_AP_BSS:
-		fw_name = WL1271_AP_FW_NAME;
+		if (wl->chip.id == CHIP_ID_1283_PG20)
+			fw_name = WL128X_AP_FW_NAME;
+		else
+			fw_name = WL127X_AP_FW_NAME;
 		break;
 	case BSS_TYPE_IBSS:
 	case BSS_TYPE_STA_BSS:
-		fw_name = WL1271_FW_NAME;
+		if (wl->chip.id == CHIP_ID_1283_PG20)
+			fw_name = WL128X_FW_NAME;
+		else
+			fw_name	= WL1271_FW_NAME;
 		break;
 	default:
 		wl1271_error("no compatible firmware for bss_type %d",
@@ -838,14 +891,14 @@ static int wl1271_fetch_nvs(struct wl1271 *wl)
 	const struct firmware *fw;
 	int ret;
 
-	ret = request_firmware(&fw, WL1271_NVS_NAME, wl1271_wl_to_dev(wl));
+	ret = request_firmware(&fw, WL12XX_NVS_NAME, wl1271_wl_to_dev(wl));
 
 	if (ret < 0) {
 		wl1271_error("could not get nvs file: %d", ret);
 		return ret;
 	}
 
-	wl->nvs = kmemdup(fw->data, sizeof(struct wl1271_nvs_file), GFP_KERNEL);
+	wl->nvs = kmemdup(fw->data, fw->size, GFP_KERNEL);
 
 	if (!wl->nvs) {
 		wl1271_error("could not allocate memory for the nvs file");
@@ -954,6 +1007,15 @@ static int wl1271_chip_wakeup(struct wl1271 *wl)
 		if (ret < 0)
 			goto out;
 		break;
+	case CHIP_ID_1283_PG20:
+		wl1271_debug(DEBUG_BOOT, "chip id 0x%x (1283 PG20)",
+			     wl->chip.id);
+
+		ret = wl1271_setup(wl);
+		if (ret < 0)
+			goto out;
+		break;
+	case CHIP_ID_1283_PG10:
 	default:
 		wl1271_warning("unsupported chip id: 0x%x", wl->chip.id);
 		ret = -ENODEV;
@@ -976,6 +1038,24 @@ static int wl1271_chip_wakeup(struct wl1271 *wl)
 
 out:
 	return ret;
+}
+
+static unsigned int wl1271_get_fw_ver_quirks(struct wl1271 *wl)
+{
+	unsigned int quirks = 0;
+	unsigned int *fw_ver = wl->chip.fw_ver;
+
+	/* Only for wl127x */
+	if ((fw_ver[FW_VER_CHIP] == FW_VER_CHIP_WL127X) &&
+	    /* Check STA version */
+	    (((fw_ver[FW_VER_IF_TYPE] == FW_VER_IF_TYPE_STA) &&
+	      (fw_ver[FW_VER_MINOR] < FW_VER_MINOR_1_SPARE_STA_MIN)) ||
+	     /* Check AP version */
+	     ((fw_ver[FW_VER_IF_TYPE] == FW_VER_IF_TYPE_AP) &&
+	      (fw_ver[FW_VER_MINOR] < FW_VER_MINOR_1_SPARE_AP_MIN))))
+		quirks |= WL12XX_QUIRK_USE_2_SPARE_BLOCKS;
+
+	return quirks;
 }
 
 int wl1271_plt_start(struct wl1271 *wl)
@@ -1013,6 +1093,9 @@ int wl1271_plt_start(struct wl1271 *wl)
 		wl->state = WL1271_STATE_PLT;
 		wl1271_notice("firmware booted in PLT mode (%s)",
 			      wl->chip.fw_ver_str);
+
+		/* Check if any quirks are needed with older fw versions */
+		wl->quirks |= wl1271_get_fw_ver_quirks(wl);
 		goto out;
 
 irq_disable:
@@ -1122,6 +1205,48 @@ static void wl1271_op_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
 		ieee80211_queue_work(wl->hw, &wl->tx_work);
 
 	spin_unlock_irqrestore(&wl->wl_lock, flags);
+}
+
+#define TX_DUMMY_PACKET_SIZE 1400
+int wl1271_tx_dummy_packet(struct wl1271 *wl)
+{
+	struct sk_buff *skb = NULL;
+	struct ieee80211_hdr_3addr *hdr;
+	int ret = 0;
+
+	skb = dev_alloc_skb(
+		sizeof(struct wl1271_tx_hw_descr) + sizeof(*hdr) +
+		TX_DUMMY_PACKET_SIZE);
+	if (!skb) {
+		wl1271_warning("failed to allocate buffer for dummy packet");
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	skb_reserve(skb, sizeof(struct wl1271_tx_hw_descr));
+
+	hdr = (struct ieee80211_hdr_3addr *) skb_put(skb, sizeof(*hdr));
+	memset(hdr, 0, sizeof(*hdr));
+	hdr->frame_control = cpu_to_le16(IEEE80211_FTYPE_DATA |
+					 IEEE80211_FCTL_TODS  |
+					 IEEE80211_STYPE_NULLFUNC);
+
+	memcpy(hdr->addr1, wl->bssid, ETH_ALEN);
+	memcpy(hdr->addr2, wl->mac_addr, ETH_ALEN);
+	memcpy(hdr->addr3, wl->bssid, ETH_ALEN);
+
+	skb_put(skb, TX_DUMMY_PACKET_SIZE);
+
+	memset(skb->data, 0, TX_DUMMY_PACKET_SIZE);
+
+	skb->pkt_type = TX_PKT_TYPE_DUMMY_REQ;
+	/* CONF_TX_AC_VO */
+	skb->queue_mapping = 0;
+
+	wl1271_op_tx(wl->hw, skb);
+
+out:
+	return ret;
 }
 
 static struct notifier_block wl1271_dev_notifier = {
@@ -1249,6 +1374,9 @@ power_off:
 	strncpy(wiphy->fw_version, wl->chip.fw_ver_str,
 		sizeof(wiphy->fw_version));
 
+	/* Check if any quirks are needed with older fw versions */
+	wl->quirks |= wl1271_get_fw_ver_quirks(wl);
+
 	/*
 	 * Now we know if 11a is supported (info from the NVS), so disable
 	 * 11a channels if not supported
@@ -1335,6 +1463,7 @@ static void __wl1271_op_remove_interface(struct wl1271 *wl)
 	memset(wl->ap_hlid_map, 0, sizeof(wl->ap_hlid_map));
 	wl->ap_fw_ps_map = 0;
 	wl->ap_ps_map = 0;
+	wl->block_size = 0;
 
 	for (i = 0; i < NUM_TX_QUEUES; i++)
 		wl->tx_blocks_freed[i] = 0;
@@ -3273,7 +3402,11 @@ int wl1271_register_hw(struct wl1271 *wl)
 
 	ret = wl1271_fetch_nvs(wl);
 	if (ret == 0) {
-		u8 *nvs_ptr = (u8 *)wl->nvs->nvs;
+		/* NOTE: The wl->nvs->nvs element must be first, in
+		 * order to simplify the casting, we assume it is at
+		 * the beginning of the wl->nvs structure.
+		 */
+		u8 *nvs_ptr = (u8 *)wl->nvs;
 
 		wl->mac_addr[0] = nvs_ptr[11];
 		wl->mac_addr[1] = nvs_ptr[10];
@@ -3458,6 +3591,7 @@ struct ieee80211_hw *wl1271_alloc_hw(void)
 	wl->ap_ps_map = 0;
 	wl->ap_fw_ps_map = 0;
 	wl->quirks = 0;
+	wl->block_size = 0;
 
 	memset(wl->tx_frames_map, 0, sizeof(wl->tx_frames_map));
 	for (i = 0; i < ACX_TX_DESCRIPTORS; i++)
