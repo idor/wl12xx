@@ -54,7 +54,7 @@ static struct conf_drv_settings default_conf = {
 			[CONF_SG_BT_PER_THRESHOLD]                  = 7500,
 			[CONF_SG_HV3_MAX_OVERRIDE]                  = 0,
 			[CONF_SG_BT_NFS_SAMPLE_INTERVAL]            = 400,
-			[CONF_SG_BT_LOAD_RATIO]                     = 50,
+			[CONF_SG_BT_LOAD_RATIO]                     = 200,
 			[CONF_SG_AUTO_PS_MODE]                      = 1,
 			[CONF_SG_AUTO_SCAN_PROBE_REQ]               = 170,
 			[CONF_SG_ACTIVE_SCAN_DURATION_FACTOR_HV3]   = 50,
@@ -254,7 +254,7 @@ static struct conf_drv_settings default_conf = {
 		.ps_poll_threshold           = 10,
 		.ps_poll_recovery_period     = 700,
 		.bet_enable                  = CONF_BET_MODE_ENABLE,
-		.bet_max_consecutive         = 10,
+		.bet_max_consecutive         = 50,
 		.psm_entry_retries           = 5,
 		.psm_exit_retries            = 255,
 		.psm_entry_nullfunc_retries  = 3,
@@ -339,6 +339,7 @@ static struct platform_device wl1271_device = {
 	},
 };
 
+static DEFINE_MUTEX(wl_list_mutex);
 static LIST_HEAD(wl_list);
 
 static int wl1271_dev_notify(struct notifier_block *me, unsigned long what,
@@ -369,10 +370,12 @@ static int wl1271_dev_notify(struct notifier_block *me, unsigned long what,
 		return NOTIFY_DONE;
 
 	wl_temp = hw->priv;
+	mutex_lock(&wl_list_mutex);
 	list_for_each_entry(wl, &wl_list, list) {
 		if (wl == wl_temp)
 			break;
 	}
+	mutex_unlock(&wl_list_mutex);
 	if (wl != wl_temp)
 		return NOTIFY_DONE;
 
@@ -1123,7 +1126,7 @@ out:
 	return ret;
 }
 
-int __wl1271_plt_stop(struct wl1271 *wl)
+static int __wl1271_plt_stop(struct wl1271 *wl)
 {
 	int ret = 0;
 
@@ -1240,6 +1243,8 @@ int wl1271_tx_dummy_packet(struct wl1271 *wl)
 	memset(skb->data, 0, TX_DUMMY_PACKET_SIZE);
 
 	skb->pkt_type = TX_PKT_TYPE_DUMMY_REQ;
+	/* Dummy packets require the TID to be management */
+	skb->priority = WL1271_TID_MGMT;
 	/* CONF_TX_AC_VO */
 	skb->queue_mapping = 0;
 
@@ -1390,8 +1395,10 @@ power_off:
 out:
 	mutex_unlock(&wl->mutex);
 
+	mutex_lock(&wl_list_mutex);
 	if (!ret)
 		list_add(&wl->list, &wl_list);
+	mutex_unlock(&wl_list_mutex);
 
 	return ret;
 }
@@ -1404,7 +1411,9 @@ static void __wl1271_op_remove_interface(struct wl1271 *wl)
 
 	wl1271_info("down");
 
+	mutex_lock(&wl_list_mutex);
 	list_del(&wl->list);
+	mutex_unlock(&wl_list_mutex);
 
 	WARN_ON(wl->state != WL1271_STATE_ON);
 
@@ -2976,10 +2985,11 @@ out:
 	return ret;
 }
 
-int wl1271_op_ampdu_action(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
-			   enum ieee80211_ampdu_mlme_action action,
-			   struct ieee80211_sta *sta, u16 tid, u16 *ssn,
-			   u8 buf_size)
+static int wl1271_op_ampdu_action(struct ieee80211_hw *hw,
+				  struct ieee80211_vif *vif,
+				  enum ieee80211_ampdu_mlme_action action,
+				  struct ieee80211_sta *sta, u16 tid, u16 *ssn,
+				  u8 buf_size)
 {
 	struct wl1271 *wl = hw->priv;
 	int ret;
@@ -3132,7 +3142,8 @@ static const u8 wl1271_rate_to_idx_2ghz[] = {
 
 #ifdef CONFIG_WL12XX_HT
 #define WL12XX_HT_CAP { \
-	.cap = IEEE80211_HT_CAP_GRN_FLD | IEEE80211_HT_CAP_SGI_20, \
+	.cap = IEEE80211_HT_CAP_GRN_FLD | IEEE80211_HT_CAP_SGI_20 | \
+	       (1 << IEEE80211_HT_CAP_RX_STBC_SHIFT), \
 	.ht_supported = true, \
 	.ampdu_factor = IEEE80211_HT_MAX_AMPDU_8K, \
 	.ampdu_density = IEEE80211_HT_MPDU_DENSITY_8, \
