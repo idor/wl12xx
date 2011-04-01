@@ -1004,7 +1004,9 @@ enum {
 	CONF_REF_CLK_19_2_E,
 	CONF_REF_CLK_26_E,
 	CONF_REF_CLK_38_4_E,
-	CONF_REF_CLK_52_E
+	CONF_REF_CLK_52_E,
+	CONF_REF_CLK_38_4_M_XTAL,
+	CONF_REF_CLK_26_M_XTAL,
 };
 
 enum single_dual_band_enum {
@@ -1202,7 +1204,8 @@ struct conf_drv_settings {
 	struct conf_scan_settings scan;
 	struct conf_rf_settings rf;
 	struct conf_ht_setting ht;
-	struct conf_memory_settings mem;
+	struct conf_memory_settings mem_wl127x;
+	struct conf_memory_settings mem_wl128x;
 };
 
 #endif
