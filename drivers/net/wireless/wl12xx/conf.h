@@ -1248,6 +1248,54 @@ struct conf_fm_coex {
 	u8 swallow_clk_diff;
 };
 
+struct conf_rx_streaming_settings {
+	/*
+	 * RX Streaming duration (in msec) from last tx/rx
+	 *
+	 * Range: u32
+	 */
+	u32 duration;
+
+	/*
+	 * Bitmap of tids to be polled during RX streaming.
+	 * (Note: it doesn't look like it really matters)
+	 *
+	 * Range: 0x1-0xff
+	 */
+	u8 queues;
+
+	/*
+	 * RX Streaming interval.
+	 * (Note:this value is also used as the rx streaming timeout)
+	 * Range: 0 (disabled), 10 - 100
+	 */
+	u8 interval;
+
+	/*
+	 * enable rx streaming also when there is no coex activity
+	 */
+	u8 always;
+};
+
+#define CONF_RATE_RETRY_POLICY_LEN 13
+struct conf_rate_policy_settings {
+	u16 rate_retry_score;
+	u16 per_add;
+	u16 per_th1;
+	u16 per_th2;
+	u16 max_per;
+	u8 inverse_curiosity_factor;
+	u8 tx_fail_low_th;
+	u8 tx_fail_high_th;
+	u8 per_alpha_shift;
+	u8 per_add_shift;
+	u8 per_beta1_shift;
+	u8 per_beta2_shift;
+	u8 rate_check_up;
+	u8 rate_check_down;
+	u8 rate_retry_policy[CONF_RATE_RETRY_POLICY_LEN];
+};
+
 struct conf_drv_settings {
 	struct conf_sg_settings sg;
 	struct conf_rx_settings rx;
@@ -1264,6 +1312,7 @@ struct conf_drv_settings {
 	struct conf_memory_settings mem_wl128x;
 	struct conf_fm_coex fm_coex;
 	u8 hci_io_ds;
+	struct conf_rate_policy_settings rate;
 };
 
 #endif
