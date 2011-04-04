@@ -1558,6 +1558,14 @@ static int wl1271_op_add_interface(struct ieee80211_hw *hw,
 		if (ret < 0)
 			goto power_off;
 
+		if (wl->bss_type == BSS_TYPE_STA_BSS) {
+			ret = wl1271_cmd_role_enable(wl,
+							 WL1271_ROLE_DEVICE,
+							 &wl->dev_role_id);
+			if (ret < 0)
+				goto irq_disable;
+		}
+
 		ret = wl1271_cmd_role_enable(wl, wl1271_get_role_type(wl),
 					     &wl->role_id);
 		if (ret < 0)
@@ -1661,6 +1669,8 @@ static void __wl1271_op_remove_interface(struct wl1271 *wl,
 		 * handle this case when we'll really support multi-role...
 		 */
 	}
+	if (wl->bss_type == BSS_TYPE_STA_BSS)
+		wl1271_cmd_role_disable(wl, &wl->dev_role_id);
 	wl1271_cmd_role_disable(wl, &wl->role_id);
 
 	/* TODO: this obviously shouldn't always be called */
@@ -3975,6 +3985,8 @@ struct ieee80211_hw *wl1271_alloc_hw(void)
 	wl->sched_scanning = false;
 	wl->role_id = WL1271_INVALID_ROLE_ID;
 	wl->sta_hlid = WL1271_INVALID_LINK_ID;
+	wl->dev_role_id = WL1271_INVALID_ROLE_ID;
+	wl->dev_hlid = WL1271_INVALID_LINK_ID;
 	setup_timer(&wl->rx_streaming_timer, wl1271_rx_streaming_timer,
 		    (unsigned long) wl);
 
