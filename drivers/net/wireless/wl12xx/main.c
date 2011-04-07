@@ -461,6 +461,7 @@ static int wl1271_dev_notify(struct notifier_block *me, unsigned long what,
 	if ((dev->operstate == IF_OPER_UP) &&
 	    !test_and_set_bit(WL1271_FLAG_STA_STATE_SENT, &wl->flags)) {
 		wl1271_cmd_set_peer_state(wl);
+		wl1271_croc(wl);
 		wl1271_info("Association completed.");
 	}
 
@@ -3040,7 +3041,9 @@ static void wl1271_bss_info_changed_sta(struct wl1271 *wl,
 			bool was_assoc =
 			    !!test_and_clear_bit(WL1271_FLAG_STA_ASSOCIATED,
 						 &wl->flags);
-			clear_bit(WL1271_FLAG_STA_STATE_SENT, &wl->flags);
+			bool was_ifup =
+			    !!test_and_clear_bit(WL1271_FLAG_STA_STATE_SENT,
+						 &wl->flags);
 			wl->aid = 0;
 
 			/* free probe-request template */
@@ -3067,6 +3070,15 @@ static void wl1271_bss_info_changed_sta(struct wl1271 *wl,
 
 			/* restore the bssid filter and go to dummy bssid */
 			if (was_assoc) {
+				/*
+				 * we might have to disable roc, if there was
+				 * no IF_OPER_UP notification.
+				 */
+				if (!was_ifup) {
+					ret = wl1271_croc(wl);
+					if (ret < 0)
+						goto out;
+				}
 				wl1271_unjoin(wl);
 				wl1271_roc(wl);
 			}
@@ -3106,12 +3118,7 @@ static void wl1271_bss_info_changed_sta(struct wl1271 *wl,
 	}
 
 	if (do_join) {
-		/* disable ROC before joining */
-		if (test_bit(WL1271_FLAG_ROC, &wl->flags)) {
-			ret = wl1271_croc(wl);
-			if (ret < 0)
-				goto out;
-		}
+		/* don't cancel ROC (on dev role) until interface is up */
 		ret = wl1271_join(wl, set_assoc);
 		if (ret < 0) {
 			wl1271_warning("cmd join failed %d", ret);
