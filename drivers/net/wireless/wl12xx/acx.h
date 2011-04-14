@@ -1046,6 +1046,21 @@ struct wl1271_acx_fw_tsf_information {
 	u8 padding[3];
 } __packed;
 
+struct wl1271_acx_ps_rx_streaming {
+	struct acx_header header;
+
+	u8 role_id;
+	u8 tid;
+	u8 enable;
+
+	/* interval between triggers (10-100 msec) */
+	u8 period;
+
+	/* timeout before first trigger (0-200 msec) */
+	u8 timeout;
+	u8 padding[3];
+} __packed;
+
 struct wl1271_acx_max_tx_retry {
 	struct acx_header header;
 
