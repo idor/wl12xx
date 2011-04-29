@@ -258,7 +258,7 @@ static struct conf_drv_settings default_conf = {
 		.bet_enable                  = CONF_BET_MODE_ENABLE,
 		.bet_max_consecutive         = 50,
 		.psm_entry_retries           = 5,
-		.psm_exit_retries            = 255,
+		.psm_exit_retries            = 16,
 		.psm_entry_nullfunc_retries  = 3,
 		.psm_entry_hangover_period   = 1,
 		.keep_alive_interval         = 55000,
@@ -305,7 +305,7 @@ static struct conf_drv_settings default_conf = {
 		.ssid_profiles                = 1,
 		.rx_block_num                 = 70,
 		.tx_min_block_num             = 40,
-		.dynamic_memory               = 0,
+		.dynamic_memory               = 1,
 		.min_req_tx_blocks            = 100,
 		.min_req_rx_blocks            = 22,
 		.tx_min                       = 27,
@@ -1294,7 +1294,7 @@ static struct sk_buff *wl12xx_alloc_dummy_packet(struct wl1271 *wl)
 	skb->priority = WL1271_TID_MGMT;
 
 	/* Initialize all fields that might be used */
-	skb->queue_mapping = 0;
+	skb_set_queue_mapping(skb, 0);
 	memset(IEEE80211_SKB_CB(skb), 0, sizeof(struct ieee80211_tx_info));
 
 	return skb;
@@ -3147,6 +3147,28 @@ out:
 	return ret;
 }
 
+static bool wl1271_tx_frames_pending(struct ieee80211_hw *hw)
+{
+	struct wl1271 *wl = hw->priv;
+	bool ret = false;
+
+	mutex_lock(&wl->mutex);
+
+	if (unlikely(wl->state == WL1271_STATE_OFF))
+		goto out;
+
+	/* packets are considered pending if in the TX queue or the FW */
+	ret = (wl->tx_queue_count > 0) || (wl->tx_frames_cnt > 0);
+
+	/* the above is appropriate for STA mode for PS purposes */
+	WARN_ON(wl->bss_type != BSS_TYPE_STA_BSS);
+
+out:
+	mutex_unlock(&wl->mutex);
+
+	return ret;
+}
+
 /* can't be const, mac80211 writes to this */
 static struct ieee80211_rate wl1271_rates[] = {
 	{ .bitrate = 10,
@@ -3398,6 +3420,7 @@ static const struct ieee80211_ops wl1271_ops = {
 	.sta_add = wl1271_op_sta_add,
 	.sta_remove = wl1271_op_sta_remove,
 	.ampdu_action = wl1271_op_ampdu_action,
+	.tx_frames_pending = wl1271_tx_frames_pending,
 	CFG80211_TESTMODE_CMD(wl1271_tm_cmd)
 };
 
