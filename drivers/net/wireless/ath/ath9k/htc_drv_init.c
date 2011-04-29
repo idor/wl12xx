@@ -243,7 +243,7 @@ static int ath9k_init_htc_services(struct ath9k_htc_priv *priv, u16 devid,
 	 */
 
 	if (IS_AR7010_DEVICE(drv_info))
-		priv->htc->credits = 45;
+		priv->htc->credits = 48;
 	else
 		priv->htc->credits = 33;
 
@@ -753,6 +753,12 @@ static void ath9k_set_hw_capab(struct ath9k_htc_priv *priv,
 	hw->queues = 4;
 	hw->channel_change_time = 5000;
 	hw->max_listen_interval = 10;
+
+	if (AR_SREV_9271(priv->ah))
+		hw->max_tx_aggregation_subframes = MAX_TX_AMPDU_SUBFRAMES_9271;
+	else
+		hw->max_tx_aggregation_subframes = MAX_TX_AMPDU_SUBFRAMES_7010;
+
 	hw->vif_data_size = sizeof(struct ath9k_htc_vif);
 	hw->sta_data_size = sizeof(struct ath9k_htc_sta);
 
@@ -801,6 +807,17 @@ static int ath9k_init_firmware_version(struct ath9k_htc_priv *priv)
 	dev_info(priv->dev, "ath9k_htc: FW Version: %d.%d\n",
 		 priv->fw_version_major,
 		 priv->fw_version_minor);
+
+	/*
+	 * Check if the available FW matches the driver's
+	 * required version.
+	 */
+	if (priv->fw_version_major != MAJOR_VERSION_REQ ||
+	    priv->fw_version_minor != MINOR_VERSION_REQ) {
+		dev_err(priv->dev, "ath9k_htc: Please upgrade to FW version %d.%d\n",
+			MAJOR_VERSION_REQ, MINOR_VERSION_REQ);
+		return -EINVAL;
+	}
 
 	return 0;
 }

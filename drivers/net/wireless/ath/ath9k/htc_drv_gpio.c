@@ -65,17 +65,19 @@ static void ath_btcoex_period_work(struct work_struct *work)
 	u32 timer_period;
 	bool is_btscan;
 	int ret;
-	u8 cmd_rsp, aggr;
 
 	ath_detect_bt_priority(priv);
 
 	is_btscan = !!(priv->op_flags & OP_BT_SCAN);
 
-	aggr = priv->op_flags & OP_BT_PRIORITY_DETECTED;
+	ret = ath9k_htc_update_cap_target(priv,
+				  !!(priv->op_flags & OP_BT_PRIORITY_DETECTED));
+	if (ret) {
+		ath_err(common, "Unable to set BTCOEX parameters\n");
+		return;
+	}
 
-	WMI_CMD_BUF(WMI_AGGR_LIMIT_CMD, &aggr);
-
-	ath9k_cmn_btcoex_bt_stomp(common, is_btscan ? ATH_BTCOEX_STOMP_ALL :
+	ath9k_hw_btcoex_bt_stomp(priv->ah, is_btscan ? ATH_BTCOEX_STOMP_ALL :
 			btcoex->bt_stomp_type);
 
 	timer_period = is_btscan ? btcoex->btscan_no_stomp :
@@ -103,9 +105,9 @@ static void ath_btcoex_duty_cycle_work(struct work_struct *work)
 		"time slice work for bt and wlan\n");
 
 	if (btcoex->bt_stomp_type == ATH_BTCOEX_STOMP_LOW || is_btscan)
-		ath9k_cmn_btcoex_bt_stomp(common, ATH_BTCOEX_STOMP_NONE);
+		ath9k_hw_btcoex_bt_stomp(ah, ATH_BTCOEX_STOMP_NONE);
 	else if (btcoex->bt_stomp_type == ATH_BTCOEX_STOMP_ALL)
-		ath9k_cmn_btcoex_bt_stomp(common, ATH_BTCOEX_STOMP_LOW);
+		ath9k_hw_btcoex_bt_stomp(ah, ATH_BTCOEX_STOMP_LOW);
 }
 
 void ath_htc_init_btcoex_work(struct ath9k_htc_priv *priv)
