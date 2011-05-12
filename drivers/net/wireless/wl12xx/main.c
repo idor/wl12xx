@@ -1587,6 +1587,9 @@ static u8 wl1271_get_role_type(struct wl1271 *wl)
 		else
 			return WL1271_ROLE_STA;
 
+	case BSS_TYPE_IBSS:
+		return WL1271_ROLE_IBSS;
+
 	default:
 		wl1271_info("invalid bss_type: %d", wl->bss_type);
 	}
@@ -1631,14 +1634,10 @@ static int wl1271_op_add_interface(struct ieee80211_hw *hw,
 		wl->bss_type = BSS_TYPE_STA_BSS;
 		wl->set_bss_type = BSS_TYPE_STA_BSS;
 		break;
-
-	/* we don't support ad-hoc yet */
-#if 0
 	case NL80211_IFTYPE_ADHOC:
 		wl->bss_type = BSS_TYPE_IBSS;
 		wl->set_bss_type = BSS_TYPE_STA_BSS;
 		break;
-#endif
 	case NL80211_IFTYPE_P2P_GO:
 		//wl->p2p = 1;
 		/* fall-through */
@@ -1669,7 +1668,8 @@ static int wl1271_op_add_interface(struct ieee80211_hw *hw,
 		if (ret < 0)
 			goto power_off;
 
-		if (wl->bss_type == BSS_TYPE_STA_BSS) {
+		if (wl->bss_type == BSS_TYPE_STA_BSS ||
+		    wl->bss_type == BSS_TYPE_IBSS) {
 			ret = wl1271_cmd_role_enable(wl,
 							 WL1271_ROLE_DEVICE,
 							 &wl->dev_role_id);
@@ -1922,6 +1922,7 @@ void wl1271_configure_filters(struct wl1271 *wl, unsigned int filters)
 static int wl1271_join(struct wl1271 *wl, bool set_assoc)
 {
 	int ret;
+	bool is_ibss = (wl->bss_type == BSS_TYPE_IBSS);
 
 	/*
 	 * One of the side effects of the JOIN command is that is clears
@@ -1938,7 +1939,10 @@ static int wl1271_join(struct wl1271 *wl, bool set_assoc)
 	if (set_assoc)
 		set_bit(WL1271_FLAG_STA_ASSOCIATED, &wl->flags);
 
-	ret = wl1271_cmd_role_start_sta(wl);
+	if (is_ibss)
+		ret = wl1271_cmd_role_start_ibss(wl);
+	else
+		ret = wl1271_cmd_role_start_sta(wl);
 	if (ret < 0)
 		goto out;
 
