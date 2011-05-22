@@ -3381,10 +3381,6 @@ static u64 wl1271_op_get_tsf(struct ieee80211_hw *hw)
 	if (ret < 0)
 		goto out_sleep;
 
-	ret = wl1271_cmd_set_peer_state(wl, hlid);
-	if (ret < 0)
-		goto out_sleep;
-
 out_sleep:
 	wl1271_ps_elp_sleep(wl);
 
@@ -3465,6 +3461,10 @@ static int wl1271_op_sta_add(struct ieee80211_hw *hw,
 	ret = wl1271_allocate_sta(wl, sta, &hlid);
 	if (ret < 0)
 		goto out;
+
+	ret = wl1271_cmd_set_peer_state(wl, hlid);
+	if (ret < 0)
+		goto out_sleep;
 
 	ret = wl1271_ps_elp_wakeup(wl);
 	if (ret < 0)
