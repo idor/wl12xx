@@ -193,7 +193,7 @@ struct wl1271_cmd_sched_scan_config {
 } __packed;
 
 
-#define SCHED_SCAN_MAX_SSIDS 8
+#define SCHED_SCAN_MAX_SSIDS 16
 
 enum {
 	SCAN_SSID_TYPE_PUBLIC = 0,
