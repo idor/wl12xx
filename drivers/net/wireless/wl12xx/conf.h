@@ -915,14 +915,6 @@ struct conf_conn_settings {
 	u8 psm_entry_nullfunc_retries;
 
 	/*
-	 * Specifies the time to linger in active mode after successfully
-	 * transmitting the PSM entry null-func frame.
-	 *
-	 * Range 0 - 255 TU's
-	 */
-	u8 psm_entry_hangover_period;
-
-	/*
 	 *
 	 * Specifies the interval of the connection keep-alive null-func
 	 * frame in ms.
@@ -1210,6 +1202,20 @@ struct conf_rate_policy_settings {
 	u8 rate_retry_policy[CONF_RATE_RETRY_POLICY_LEN];
 };
 
+struct conf_hangover_settings {
+	u32 recover_time;
+	u8 hangover_period;
+	u8 dynamic_mode;
+	u8 early_termination_mode;
+	u8 max_period;
+	u8 min_period;
+	u8 increase_delta;
+	u8 decrease_delta;
+	u8 quiet_time;
+	u8 increase_time;
+	u8 window_size;
+};
+
 struct conf_drv_settings {
 	struct conf_sg_settings sg;
 	struct conf_rx_settings rx;
@@ -1227,6 +1233,7 @@ struct conf_drv_settings {
 	struct conf_fm_coex fm_coex;
 	u8 hci_io_ds;
 	struct conf_rate_policy_settings rate;
+	struct conf_hangover_settings hangover;
 };
 
 #endif
