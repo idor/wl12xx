@@ -168,6 +168,36 @@ static void wl1271_event_rssi_trigger(struct wl1271 *wl,
 	wl->last_rssi_event = event;
 }
 
+static void wl12xx_event_soft_gemini_sense(struct wl1271 *wl,
+					       u8 enable)
+{
+	if (enable) {
+		/* disable dynamic PS when the firmware senses BT*/
+		ieee80211_disable_dyn_ps(wl->vif);
+		set_bit(WL1271_FLAG_SOFT_GEMINI, &wl->flags);
+	} else {
+		ieee80211_enable_dyn_ps(wl->vif);
+		clear_bit(WL1271_FLAG_SOFT_GEMINI, &wl->flags);
+		wl1271_recalc_rx_streaming(wl);
+	}
+
+}
+
+static void wl1271_stop_ba_event(struct wl1271 *wl, bool ba_allowed)
+{
+	/* Convert the value to bool */
+	wl->ba_allowed = ba_allowed;
+
+	/*
+	 * Return in case:
+	 * there are not BA open or the event indication is to allowed BA
+	 */
+	if ((!wl->ba_rx_bitmap) || (wl->ba_allowed))
+		return;
+
+	ieee80211_stop_rx_ba_session(wl->vif, wl->ba_rx_bitmap, wl->bssid);
+}
+
 static void wl1271_event_mbox_dump(struct event_mailbox *mbox)
 {
 	wl1271_debug(DEBUG_EVENT, "MBOX DUMP:");
@@ -252,6 +282,14 @@ static int wl1271_event_process(struct wl1271 *wl, struct event_mailbox *mbox)
 		wl1271_debug(DEBUG_EVENT, "RSSI_SNR_TRIGGER_0_EVENT");
 		if (wl->vif)
 			wl1271_event_rssi_trigger(wl, mbox);
+	}
+
+	if ((vector & BA_SESSION_RX_CONSTRAINT_EVENT_ID) && !is_ap) {
+		wl1271_debug(DEBUG_EVENT, "BA_SESSION_RX_CONSTRAINT_EVENT_ID. "
+			     "ba_allowed = 0x%x", mbox->rx_ba_allowed);
+
+		if (wl->vif)
+			wl1271_stop_ba_event(wl, mbox->rx_ba_allowed);
 	}
 
 	if ((vector & DUMMY_PACKET_EVENT_ID)) {
