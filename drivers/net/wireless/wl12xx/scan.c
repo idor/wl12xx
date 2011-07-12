@@ -205,6 +205,15 @@ static int wl1271_scan_send(struct wl1271 *wl, enum ieee80211_band band,
 		memcpy(cmd->params.ssid, wl->scan.ssid, wl->scan.ssid_len);
 	}
 
+	/*
+	 * enable ssid filtering only for targeted scans (with specific ssid).
+	 * p2p scans ("DIRECT-") are treated as wildcard, so disable
+	 * filtering for them as well.
+	 */
+	if (wl->scan.ssid_len &&
+	    !(wl->scan.ssid_len == 7 && !memcmp(wl->scan.ssid, "DIRECT-", 7)))
+		cmd->params.set_ssid_filter = 1;
+
 	memcpy(cmd->addr, wl->mac_addr, ETH_ALEN);
 
 	ret = wl1271_cmd_build_probe_req(wl, wl->scan.ssid, wl->scan.ssid_len,

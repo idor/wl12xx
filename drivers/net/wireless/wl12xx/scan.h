@@ -85,7 +85,8 @@ struct basic_scan_params {
 	u8 band;
 
 	u8 scan_tag;
-	u8 padding2[2];
+	u8 set_ssid_filter;
+	u8 padding2;
 } __packed;
 
 struct basic_scan_channel_params {
