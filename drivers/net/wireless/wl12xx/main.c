@@ -3928,6 +3928,7 @@ static int wl1271_op_sta_add_locked(struct ieee80211_hw *hw,
 				    struct ieee80211_sta *sta)
 {
 	struct wl1271 *wl = hw->priv;
+	struct wl1271_station *wl_sta;
 	int ret = 0;
 	u8 hlid;
 	ret = wl1271_allocate_sta(wl, sta, &hlid);
@@ -3945,6 +3946,9 @@ static int wl1271_op_sta_add_locked(struct ieee80211_hw *hw,
 	ret = wl1271_acx_set_ht_capabilities(wl, &sta->ht_cap, true, hlid);
 	if (ret < 0)
 		goto out;
+
+	wl_sta = (struct wl1271_station *)sta->drv_priv;
+	wl_sta->added = true;
 
 	return 0;
 out:
@@ -3992,7 +3996,7 @@ static int wl1271_op_sta_remove(struct ieee80211_hw *hw,
 				struct ieee80211_sta *sta)
 {
 	struct wl1271 *wl = hw->priv;
-	struct wl1271_station *wl_sta;
+	struct wl1271_station *wl_sta = (struct wl1271_station *)sta->drv_priv;
 	int ret = 0, id;
 
 	wl1271_debug(DEBUG_MAC80211, "mac80211 remove sta %d", (int)sta->aid);
@@ -4005,8 +4009,9 @@ static int wl1271_op_sta_remove(struct ieee80211_hw *hw,
 	if (wl->bss_type != BSS_TYPE_AP_BSS)
 		goto out;
 
+	if (unlikely(!wl_sta->added))
+		goto out;
 
-	wl_sta = (struct wl1271_station *)sta->drv_priv;
 	id = wl_sta->hlid - WL1271_AP_STA_HLID_START;
 	if (WARN_ON(!test_bit(id, wl->ap_hlid_map)))
 		goto out;
@@ -4026,6 +4031,7 @@ out_sleep:
 
 out:
 	mutex_unlock(&wl->mutex);
+	wl_sta->added = false;
 	return ret;
 }
 
