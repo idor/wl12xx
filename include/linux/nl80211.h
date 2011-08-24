@@ -509,6 +509,11 @@
  * @NL80211_CMD_TDLS_OPER: Perform a high-level TDLS command (e.g. link setup).
  * @NL80211_CMD_TDLS_MGMT: Send a TDLS management frame.
  *
+ * @NL80211_CMD_SCAN_CANCEL: Stop currently running scan (both sw and hw).
+ *	This operation will eventually invoke %NL80211_CMD_SCAN_ABORTED
+ *	event, partial scan results will be available. Returns -ENOENT
+ *	if scan is not running.
+ *
  * @NL80211_CMD_MAX: highest used command number
  * @__NL80211_CMD_AFTER_LAST: internal use
  */
@@ -637,6 +642,8 @@ enum nl80211_commands {
 
 	NL80211_CMD_TDLS_OPER,
 	NL80211_CMD_TDLS_MGMT,
+
+	NL80211_CMD_SCAN_CANCEL,
 
 	/* add new commands above here */
 
