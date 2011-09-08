@@ -1640,7 +1640,7 @@ static struct notifier_block wl1271_dev_notifier = {
 };
 
 #ifdef CONFIG_PM
-static int wl1271_configure_suspend(struct wl1271 *wl)
+static int wl1271_configure_suspend_sta(struct wl1271 *wl)
 {
 	int ret = 0;
 
