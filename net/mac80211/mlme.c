@@ -366,6 +366,15 @@ void ieee80211_send_nullfunc(struct ieee80211_local *local,
 	ieee80211_tx_skb(sdata, skb);
 }
 
+void ieee80211_send_null(struct ieee80211_vif *vif)
+{
+	struct ieee80211_sub_if_data *sdata = vif_to_sdata(vif);
+	struct ieee80211_local *local = sdata->local;
+
+	ieee80211_send_nullfunc(local, sdata, 0);
+}
+EXPORT_SYMBOL(ieee80211_send_null);
+
 static void ieee80211_send_4addr_nullfunc(struct ieee80211_local *local,
 					  struct ieee80211_sub_if_data *sdata)
 {

@@ -3381,6 +3381,7 @@ unsigned char ieee80211_get_operstate(struct ieee80211_vif *vif);
  * and wake up the suspended queues.
  */
 void ieee80211_chswitch_done(struct ieee80211_vif *vif, bool success);
+void ieee80211_send_null(struct ieee80211_vif *vif);
 
 /**
  * ieee80211_request_smps - request SM PS transition
