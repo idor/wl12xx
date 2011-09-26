@@ -1043,25 +1043,33 @@ static int wl12xx_fetch_firmware(struct wl1271 *wl, bool plt)
 {
 	const struct firmware *fw;
 	const char *fw_name;
+	enum wl12xx_fw_type fw_type;
 	int ret;
+	u8 open_count;
 
+	open_count = ieee80211_get_open_count(wl->hw, NULL);
 	if (plt) {
-		if (wl->fw_type == WL12XX_FW_TYPE_PLT)
-			return 0;
-
+		fw_type = WL12XX_FW_TYPE_PLT;
 		if (wl->chip.id == CHIP_ID_1283_PG20)
 			fw_name = WL128X_PLT_FW_NAME;
 		else
 			fw_name	= WL127X_PLT_FW_NAME;
 	} else {
-		if (wl->fw_type == WL12XX_FW_TYPE_NORMAL)
-			return 0;
+		if (open_count > 1) {
+			fw_type = WL12XX_FW_TYPE_MULTI;
+			fw_name = WL128X_FW_NAME_MULTI;
+		} else {
+			fw_type = WL12XX_FW_TYPE_NORMAL;
+			fw_name = WL128X_FW_NAME_SINGLE;
+		}
 
-		if (wl->chip.id == CHIP_ID_1283_PG20)
-			fw_name = WL128X_FW_NAME;
-		else
+		/* TODO: this is just for testing on zoom */
+		if (wl->chip.id != CHIP_ID_1283_PG20)
 			fw_name	= WL127X_FW_NAME;
 	}
+
+	if (wl->fw_type == fw_type)
+		return 0;
 
 	wl1271_debug(DEBUG_BOOT, "booting firmware %s", fw_name);
 
@@ -1092,11 +1100,7 @@ static int wl12xx_fetch_firmware(struct wl1271 *wl, bool plt)
 
 	memcpy(wl->fw, fw->data, wl->fw_len);
 	ret = 0;
-	if (plt)
-		wl->fw_type = WL12XX_FW_TYPE_PLT;
-	else
-		wl->fw_type = WL12XX_FW_TYPE_NORMAL;
-
+	wl->fw_type = fw_type;
 out:
 	release_firmware(fw);
 
@@ -1865,6 +1869,7 @@ static void wl1271_op_stop(struct ieee80211_hw *hw)
 	mutex_lock(&wl->mutex);
 
 	wl1271_power_off(wl);
+	wl->fw_type = WL12XX_FW_TYPE_NONE;
 
 	wl->band = IEEE80211_BAND_2GHZ;
 
@@ -2105,6 +2110,26 @@ out:
 	return booted;
 }
 
+static bool wl12xx_need_fw_change(struct ieee80211_hw *hw,
+				  struct ieee80211_vif *vif,
+				  enum wl12xx_fw_type current_fw,
+				  bool add)
+{
+	u8 open_count;
+
+	open_count = ieee80211_get_open_count(hw, vif);
+	if (add)
+		open_count++;
+
+	if (open_count > 1 && current_fw == WL12XX_FW_TYPE_NORMAL)
+		return true;
+	if (open_count <= 1 && current_fw == WL12XX_FW_TYPE_MULTI)
+		return true;
+
+	return false;
+
+}
+
 static int wl1271_op_add_interface(struct ieee80211_hw *hw,
 				   struct ieee80211_vif *vif)
 {
@@ -2133,6 +2158,7 @@ static int wl1271_op_add_interface(struct ieee80211_hw *hw,
 		goto out;
 	}
 
+
 	ret = wl12xx_init_vif_data(wl, vif);
 	if (ret < 0)
 		goto out;
@@ -2144,10 +2170,17 @@ static int wl1271_op_add_interface(struct ieee80211_hw *hw,
 		goto out;
 	}
 
+	if (wl12xx_need_fw_change(hw, vif, wl->fw_type, true)) {
+		mutex_unlock(&wl->mutex);
+		wl1271_recovery_work(&wl->recovery_work);
+		return 0;
+	}
+
 	/*
 	 * TODO: after the nvs issue will be solved, move this block
 	 * to start(), and make sure here the driver is ON.
 	 */
+	wl1271_info("state: %d", wl->state);
 	if (wl->state == WL1271_STATE_OFF) {
 		/*
 		 * we still need this in order to configure the fw
@@ -2323,6 +2356,8 @@ static void wl1271_op_remove_interface(struct ieee80211_hw *hw,
 		break;
 	}
 	WARN_ON(iter != wlvif);
+	if (wl12xx_need_fw_change(hw, vif, wl->fw_type, false))
+		wl12xx_queue_recovery_work(wl);
 out:
 	mutex_unlock(&wl->mutex);
 	cancel_work_sync(&wl->recovery_work);
