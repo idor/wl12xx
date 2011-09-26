@@ -2337,6 +2337,7 @@ static void wl1271_op_remove_interface(struct ieee80211_hw *hw,
 	struct wl1271 *wl = hw->priv;
 	struct wl12xx_vif *wlvif = wl12xx_vif_to_data(vif);
 	struct wl12xx_vif *iter;
+	bool cancel_recovery = true;
 
 	mutex_lock(&wl->mutex);
 
@@ -2356,11 +2357,14 @@ static void wl1271_op_remove_interface(struct ieee80211_hw *hw,
 		break;
 	}
 	WARN_ON(iter != wlvif);
-	if (wl12xx_need_fw_change(hw, vif, wl->fw_type, false))
+	if (wl12xx_need_fw_change(hw, vif, wl->fw_type, false)) {
 		wl12xx_queue_recovery_work(wl);
+		cancel_recovery = false;
+	}
 out:
 	mutex_unlock(&wl->mutex);
-	cancel_work_sync(&wl->recovery_work);
+	if (cancel_recovery)
+		cancel_work_sync(&wl->recovery_work);
 }
 
 static int wl1271_join(struct wl1271 *wl, struct wl12xx_vif *wlvif,
