@@ -787,6 +787,9 @@ struct cfg80211_ssid {
  * @wiphy: the wiphy this was for
  * @dev: the interface
  * @aborted: (internal) scan request was notified as aborted
+ * @min_dwell: minimum time to wait on each channel for active scans
+ * @max_dwell: maximum time to wait on each channel for active scans
+ * @num_probe: number of probe requests to transmit on each active scan channel
  */
 struct cfg80211_scan_request {
 	struct cfg80211_ssid *ssids;
@@ -799,6 +802,10 @@ struct cfg80211_scan_request {
 	struct wiphy *wiphy;
 	struct net_device *dev;
 	bool aborted;
+
+	u32 min_dwell;
+	u32 max_dwell;
+	u8 num_probe;
 
 	/* keep last */
 	struct ieee80211_channel *channels[0];
