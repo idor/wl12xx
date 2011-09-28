@@ -177,6 +177,7 @@ static const struct nla_policy nl80211_policy[NL80211_ATTR_MAX+1] = {
 	[NL80211_ATTR_STA_PLINK_STATE] = { .type = NLA_U8 },
 	[NL80211_ATTR_SCHED_SCAN_INTERVAL] = { .type = NLA_U32 },
 	[NL80211_ATTR_IM_SCAN_RESULT] = { .type = NLA_FLAG },
+	[NL80211_ATTR_IM_SCAN_RESULT_MIN_RSSI] = { .type = NLA_U32 },
 };
 
 /* policy for the key attributes */
@@ -3459,10 +3460,18 @@ static int nl80211_trigger_scan(struct sk_buff *skb, struct genl_info *info)
 		       request->ie_len);
 	}
 
-	if (info->attrs[NL80211_ATTR_IM_SCAN_RESULT])
+	if (info->attrs[NL80211_ATTR_IM_SCAN_RESULT]) {
 		rdev->im_scan_result_snd_pid = info->snd_pid;
-	else
+		if (info->attrs[NL80211_ATTR_IM_SCAN_RESULT_MIN_RSSI]) {
+			attr = info->attrs[NL80211_ATTR_IM_SCAN_RESULT_MIN_RSSI];
+			rdev->im_scan_result_min_rssi_mbm =
+				DBM_TO_MBM(nla_get_u32(attr));
+		} else {
+			rdev->im_scan_result_min_rssi_mbm = 0;
+		}
+	} else {
 		rdev->im_scan_result_snd_pid = 0;
+	}
 
 	request->dev = dev;
 	request->wiphy = &rdev->wiphy;
