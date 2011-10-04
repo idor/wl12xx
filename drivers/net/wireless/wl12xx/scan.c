@@ -210,7 +210,6 @@ static int wl1271_scan_send(struct wl1271 *wl, struct ieee80211_vif *vif,
 
 	cmd->params.tx_rate = cpu_to_le32(basic_rate);
 	cmd->params.n_probe_reqs = wl->conf.scan.num_probe_reqs;
-	cmd->params.tx_rate = cpu_to_le32(basic_rate);
 	cmd->params.tid_trigger = 0;
 	cmd->params.scan_tag = WL1271_SCAN_DEFAULT_TAG;
 
@@ -272,7 +271,10 @@ void wl1271_scan_stm(struct wl1271 *wl, struct ieee80211_vif *vif)
 
 	case WL1271_SCAN_STATE_2GHZ_ACTIVE:
 		band = IEEE80211_BAND_2GHZ;
-		rate = wl1271_tx_min_rate_get(wl, wlvif->bitrate_masks[band]);
+		if (wl->scan.req->no_cck)
+			rate = wl1271_tx_min_rate_get(wl, CONF_TX_RATE_MASK_BASIC_P2P);
+		else
+			rate = wl1271_tx_min_rate_get(wl, CONF_TX_RATE_MASK_BASIC);
 		ret = wl1271_scan_send(wl, vif, band, false, rate);
 		if (ret == WL1271_NOTHING_TO_SCAN) {
 			wl->scan.state = WL1271_SCAN_STATE_2GHZ_PASSIVE;
@@ -283,7 +285,10 @@ void wl1271_scan_stm(struct wl1271 *wl, struct ieee80211_vif *vif)
 
 	case WL1271_SCAN_STATE_2GHZ_PASSIVE:
 		band = IEEE80211_BAND_2GHZ;
-		rate = wl1271_tx_min_rate_get(wl, wlvif->bitrate_masks[band]);
+		if (wl->scan.req->no_cck)
+			rate = wl1271_tx_min_rate_get(wl, CONF_TX_RATE_MASK_BASIC_P2P);
+		else
+			rate = wl1271_tx_min_rate_get(wl, CONF_TX_RATE_MASK_BASIC);
 		ret = wl1271_scan_send(wl, vif, band, true, rate);
 		if (ret == WL1271_NOTHING_TO_SCAN) {
 			if (wl->enable_11a)
