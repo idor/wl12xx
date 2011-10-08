@@ -199,11 +199,6 @@ int wl1271_ps_set_mode(struct wl1271 *wl, struct wl12xx_vif *wlvif,
 				return ret;
 		}
 
-		/* disable beacon filtering */
-		ret = wl1271_acx_beacon_filter_opt(wl, wlvif, false);
-		if (ret < 0)
-			return ret;
-
 		ret = wl1271_cmd_ps_mode(wl, wlvif, mode, 0);
 		if (ret < 0)
 			return ret;
