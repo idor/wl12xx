@@ -2516,32 +2516,31 @@ static int wl12xx_config_vif(struct wl1271 *wl, struct wl12xx_vif *wlvif,
 		}
 	}
 
-	if (conf->flags & IEEE80211_CONF_PS &&
-	    !test_bit(WLVIF_FLAG_PSM_REQUESTED, &wlvif->flags)) {
-		set_bit(WLVIF_FLAG_PSM_REQUESTED, &wlvif->flags);
+	if ((changed & IEEE80211_CONF_CHANGE_PS) && !is_ap) {
 
-		/*
-		 * We enter PSM only if we're already associated.
-		 * If we're not, we'll enter it when joining an SSID,
-		 * through the bss_info_changed() hook.
-		 */
-		if (test_bit(WLVIF_FLAG_STA_ASSOCIATED, &wlvif->flags)) {
-			wl1271_debug(DEBUG_PSM, "psm enabled");
+		if ((conf->flags & IEEE80211_CONF_PS) &&
+		    test_bit(WLVIF_FLAG_STA_ASSOCIATED, &wlvif->flags) &&
+		    !test_bit(WLVIF_FLAG_IN_AUTO_PS, &wlvif->flags)) {
+
+			wl1271_debug(DEBUG_PSM, "auto ps enabled");
+
 			ret = wl1271_ps_set_mode(wl, wlvif,
 						 STATION_AUTO_PS_MODE);
-		}
-	} else if (!(conf->flags & IEEE80211_CONF_PS) &&
-		   test_bit(WLVIF_FLAG_PSM_REQUESTED, &wlvif->flags)) {
-		wl1271_debug(DEBUG_PSM, "psm disabled");
+			if (ret < 0)
+				wl1271_warning("enter auto ps failed %d", ret);
 
-		clear_bit(WLVIF_FLAG_PSM_REQUESTED, &wlvif->flags);
+		} else if (!(conf->flags & IEEE80211_CONF_PS) &&
+			   test_bit(WLVIF_FLAG_IN_AUTO_PS, &wlvif->flags)) {
 
-		if (test_bit(WLVIF_FLAG_PSM, &wlvif->flags))
+			wl1271_debug(DEBUG_PSM, "auto ps disabled");
+
 			ret = wl1271_ps_set_mode(wl, wlvif,
 						 STATION_ACTIVE_MODE);
+			if (ret < 0)
+				wl1271_warning("exit auto ps failed %d", ret);
 
-		if (!is_ap)
 			ieee80211_send_null(wl12xx_wlvif_to_vif(wlvif));
+		}
 	}
 
 	if (conf->power_level != wlvif->power_level) {
@@ -3819,15 +3818,6 @@ sta_not_found:
 		 */
 		if (wlvif->dev_hlid != WL12XX_INVALID_LINK_ID) {
 			ret = wl12xx_stop_dev(wl, wlvif);
-			if (ret < 0)
-				goto out;
-		}
-
-		/* If we want to go in PSM but we're not there yet */
-		if (test_bit(WLVIF_FLAG_PSM_REQUESTED, &wlvif->flags) &&
-		    !test_bit(WLVIF_FLAG_PSM, &wlvif->flags)) {
-
-			ret = wl1271_ps_set_mode(wl, wlvif,STATION_AUTO_PS_MODE);
 			if (ret < 0)
 				goto out;
 		}
