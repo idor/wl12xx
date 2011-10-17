@@ -3127,7 +3127,7 @@ static int wl1271_op_hw_scan(struct ieee80211_hw *hw,
 			ret = -EBUSY;
 			goto out_sleep;
 		}
-		wl12xx_stop_dev(wl, wlvif);
+		wl12xx_croc(wl, wlvif->dev_role_id);
 	}
 
 	ret = wl1271_scan(hw->priv, vif, ssid, len, req);
