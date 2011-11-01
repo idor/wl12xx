@@ -3897,9 +3897,9 @@ sta_not_found:
 		}
 		/*
 		 * stop device role if started (we might already be in
-		 * STA role). TODO: make it better.
+		 * STA/IBSS role).
 		 */
-		if (wlvif->dev_role_id != WL12XX_INVALID_ROLE_ID) {
+		if (wlvif->dev_hlid != WL12XX_INVALID_LINK_ID) {
 			ret = wl12xx_stop_dev(wl, wlvif);
 			if (ret < 0)
 				goto out;
