@@ -3413,7 +3413,7 @@ static int wl1271_ap_set_probe_resp_tmpl(struct wl1271 *wl,
 	if (!skb)
 		return -EINVAL;
 
-	ret = wl1271_cmd_template_set(wl, wlvif->role_id, wlvif->role_id,
+	ret = wl1271_cmd_template_set(wl, wlvif->role_id,
 				      CMD_TEMPL_AP_PROBE_RESPONSE,
 				      skb->data,
 				      skb->len, 0,
@@ -3544,8 +3544,8 @@ static int wl1271_bss_beacon_info_changed(struct wl1271 *wl,
 	}
 
 	if ((changed & BSS_CHANGED_AP_PROBE_RESP) && is_ap) {
-		ret = wl1271_ap_set_probe_resp_tmpl(wl,
-			wl1271_tx_min_rate_get(wl, wl->basic_rate_set));
+		ret = wl1271_ap_set_probe_resp_tmpl(wl, vif,
+			wl1271_tx_min_rate_get(wl, wlvif->basic_rate_set));
 		if (ret < 0)
 			goto out;
 	}
